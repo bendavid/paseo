@@ -12,6 +12,7 @@ import {
   type AgentMetadata,
   type AgentMode,
   type AgentModelDefinition,
+  type AgentSelectOption,
   type AgentPermissionRequest,
   type AgentPermissionResponse,
   type AgentProviderNotice,
@@ -307,6 +308,21 @@ function mapThinkingOption(option: (typeof OMP_THINKING_OPTIONS)[number]) {
     };
   }
   return mappedOption;
+}
+
+function mapThinkingOptionWithDefault(
+  option: (typeof OMP_THINKING_OPTIONS)[number],
+  isDefault: boolean,
+): AgentSelectOption {
+  const mapped: AgentSelectOption = {
+    id: option.id,
+    label: option.label,
+    description: option.description,
+  };
+  if (isDefault) {
+    mapped.isDefault = true;
+  }
+  return mapped;
 }
 
 function toAgentUsage(stats: OmpSessionStats): AgentUsage | undefined {
@@ -857,7 +873,8 @@ function buildExtensionUiResponse(
   return { value: answer };
 }
 
-function mapOmpModel(model: OmpModel, provider: AgentProvider): AgentModelDefinition {
+export function mapOmpModel(model: OmpModel, provider: AgentProvider): AgentModelDefinition {
+  const { thinkingOptions, defaultThinkingOptionId } = resolveOmpThinkingConfig(model);
   return {
     provider,
     id: `${model.provider}/${model.id}`,
@@ -867,8 +884,39 @@ function mapOmpModel(model: OmpModel, provider: AgentProvider): AgentModelDefini
       provider: model.provider,
       modelId: model.id,
     },
-    thinkingOptions: model.reasoning ? OMP_THINKING_OPTIONS.map(mapThinkingOption) : undefined,
-    defaultThinkingOptionId: model.reasoning ? DEFAULT_OMP_THINKING_LEVEL : undefined,
+    thinkingOptions,
+    defaultThinkingOptionId,
+  };
+}
+
+function resolveOmpThinkingConfig(model: OmpModel): {
+  thinkingOptions: AgentSelectOption[] | undefined;
+  defaultThinkingOptionId: string | undefined;
+} {
+  if (!model.reasoning) {
+    return { thinkingOptions: undefined, defaultThinkingOptionId: undefined };
+  }
+  const efforts = model.thinking?.efforts;
+  if (!efforts || efforts.length === 0) {
+    // Older omp versions don't report per-model thinking config; expose the full set.
+    return {
+      thinkingOptions: OMP_THINKING_OPTIONS.map(mapThinkingOption),
+      defaultThinkingOptionId: DEFAULT_OMP_THINKING_LEVEL,
+    };
+  }
+  const effortSet = new Set(efforts);
+  const filtered = OMP_THINKING_OPTIONS.filter((option) => effortSet.has(option.id));
+  const options = filtered.length > 0 ? filtered : [...OMP_THINKING_OPTIONS];
+  const reportedDefault = model.thinking?.defaultLevel;
+  const defaultThinkingOptionId =
+    reportedDefault && options.some((option) => option.id === reportedDefault)
+      ? reportedDefault
+      : (options[0]?.id ?? DEFAULT_OMP_THINKING_LEVEL);
+  return {
+    thinkingOptions: options.map((option) =>
+      mapThinkingOptionWithDefault(option, option.id === defaultThinkingOptionId),
+    ),
+    defaultThinkingOptionId,
   };
 }
 
@@ -2202,8 +2250,7 @@ export class OmpAgentClient implements AgentClient {
       cwd: config.cwd,
       protocolMode: "rpc-ui",
       model: config.model,
-      thinkingOptionId:
-        normalizeOmpThinkingOption(config.thinkingOptionId) ?? DEFAULT_OMP_THINKING_LEVEL,
+      thinkingOptionId: normalizeOmpThinkingOption(config.thinkingOptionId) ?? undefined,
       noSession: config.internal === true,
       modeId: launchMode.modeId,
       extraArgs: launchMode.extraArgs,

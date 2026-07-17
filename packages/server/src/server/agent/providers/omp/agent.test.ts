@@ -56,7 +56,7 @@ describe("OMP agent client and session", () => {
       cwd: "/tmp/paseo-omp-agent-test",
       protocolMode: "rpc-ui",
       modeId: "ask",
-      argv: ["omp", "--mode", "rpc-ui", "--approval-mode", "always-ask", "--thinking", "medium"],
+      argv: ["omp", "--mode", "rpc-ui", "--approval-mode", "always-ask"],
     });
     expect(omp.registeredHostTools()).toEqual([
       [expect.objectContaining({ name: "create_agent" })],
@@ -65,6 +65,21 @@ describe("OMP agent client and session", () => {
       supportsMcpServers: false,
       supportsNativePaseoTools: true,
     });
+  });
+
+  test("passes --thinking when a thinking option is provided", async () => {
+    const omp = new OmpHarness();
+    await omp.start({ modeId: "ask", thinkingOptionId: "xhigh" }, createToolCatalog());
+
+    expect(omp.launchConfiguration().argv).toEqual([
+      "omp",
+      "--mode",
+      "rpc-ui",
+      "--approval-mode",
+      "always-ask",
+      "--thinking",
+      "xhigh",
+    ]);
   });
 
   test("streams a prompt through completion", async () => {
