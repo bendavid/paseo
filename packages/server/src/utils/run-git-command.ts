@@ -7,6 +7,7 @@ import {
   type GitCommandRuntimeMetricsSnapshot,
 } from "./git-command-runtime-metrics.js";
 import { spawnProcess } from "./spawn.js";
+import type { ProcessLaunchStrategy } from "../server/devcontainer/launch-strategy.js";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 20 * 1024 * 1024; // 20MB
@@ -24,6 +25,11 @@ export interface GitCommandOptions {
   timeout?: number;
   maxOutputBytes?: number;
   acceptExitCodes?: number[];
+  /**
+   * When set, git commands are executed inside the dev container via the
+   * launch strategy instead of spawning git directly on the host.
+   */
+  launchStrategy?: ProcessLaunchStrategy;
 }
 
 export interface GitCommandResult {
@@ -167,12 +173,19 @@ export function runGitCommand(
 
         // `core.quotepath=false` makes git emit raw UTF-8 paths instead of
         // octal-escaping non-ASCII bytes (e.g. `测试文件.txt` vs `"\346\265\213..."`).
-        const child = spawnProcess("git", ["-c", "core.quotepath=false", ...args], {
-          cwd: options.cwd,
-          envOverlay,
-          shell: false,
-          stdio: ["ignore", "pipe", "pipe"],
-        });
+        const gitArgs = ["-c", "core.quotepath=false", ...args];
+        const child = options.launchStrategy
+          ? options.launchStrategy.spawn("git", gitArgs, {
+              cwd: options.cwd,
+              envOverlay,
+              stdio: ["ignore", "pipe", "pipe"],
+            })
+          : spawnProcess("git", gitArgs, {
+              cwd: options.cwd,
+              envOverlay,
+              shell: false,
+              stdio: ["ignore", "pipe", "pipe"],
+            });
 
         let settled = false;
         let metricFinished = false;

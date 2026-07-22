@@ -2830,6 +2830,8 @@ export const ServerInfoStatusPayloadSchema = z
         stableProjectIdentity: z.boolean().optional(),
         // COMPAT(workspaceScriptManagement): added in v0.1.105, remove gate after 2027-01-10.
         workspaceScriptManagement: z.boolean().optional(),
+        // COMPAT(devContainers): added in v0.2.0, remove gate after 2027-07-22 once daemon floor >= v0.2.0.
+        devContainers: z.boolean().optional(),
       })
       .optional(),
   })

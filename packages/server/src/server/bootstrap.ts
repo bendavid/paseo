@@ -126,6 +126,8 @@ import type { OpenAiSpeechProviderConfig } from "./speech/providers/openai/confi
 import type { LocalSpeechProviderConfig } from "./speech/providers/local/config.js";
 import type { RequestedSpeechProviders } from "./speech/speech-types.js";
 import { createSpeechService } from "./speech/speech-runtime.js";
+import { createDevContainerService, createLaunchStrategyRegistry } from "./devcontainer/index.js";
+import { runGitCommand, type GitCommandOptions } from "../utils/run-git-command.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import { AgentStorage } from "./agent/agent-storage.js";
 import { attachAgentStoragePersistence } from "./persistence-hooks.js";
@@ -582,6 +584,21 @@ export async function createPaseoDaemon(
   });
   applyTerminalAgentHookSetting({ store: daemonConfigStore, logger });
 
+  // Dev container support — check whether the devcontainer CLI and Docker are
+  // available on this host. The result is advertised as a server_info feature
+  // flag so clients can gate dev container UI on daemon capability.
+  const devContainerService = createDevContainerService({ logger });
+  const launchStrategyRegistry = createLaunchStrategyRegistry({
+    logger,
+    devContainerService,
+  });
+  const devContainerAvailable = await devContainerService.isAvailable();
+  if (devContainerAvailable) {
+    logger.info("Dev container support is available (devcontainer CLI + Docker detected)");
+  } else {
+    logger.debug("Dev container support is not available");
+  }
+
   const serviceProxyPublicBaseUrl = config.serviceProxy?.publicBaseUrl
     ? config.serviceProxy.publicBaseUrl
     : null;
@@ -792,6 +809,15 @@ export async function createPaseoDaemon(
     worktreesRoot: config.worktreesRoot,
     deps: {
       forgeOverrides: { github },
+      // Wrap runGitCommand so git operations execute inside the dev container
+      // when one is active for the workspace. The strategy is resolved from the
+      // command's cwd; worktree lifecycle operations (add/remove) always use
+      // local execution because the container may not exist yet.
+      runGitCommand: (args: string[], options: GitCommandOptions) =>
+        runGitCommand(args, {
+          ...options,
+          launchStrategy: launchStrategyRegistry.getStrategy(options.cwd),
+        }),
     },
   });
   const workspaceProvisioning = createWorkspaceProvisioningService({
@@ -820,6 +846,7 @@ export async function createPaseoDaemon(
       workspaceGitService.onWorkspaceStateMayHaveChanged(cwd);
     },
     mcpAuthToken: agentMcpAuthToken,
+    launchStrategyRegistry,
     logger,
   });
 
@@ -1569,6 +1596,7 @@ export async function createPaseoDaemon(
               serviceProxyPublicBaseUrl,
               browserToolsBroker,
               hubRelationships,
+              devContainerAvailable,
             );
             await hubRelationships.start();
 

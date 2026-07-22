@@ -107,6 +107,7 @@ import {
   createStringCommandShellEnvOverlay,
 } from "../../../utils/string-command-shell.js";
 import { spawnProcess } from "../../../utils/spawn.js";
+import type { ProcessLaunchStrategy } from "../../devcontainer/launch-strategy.js";
 import {
   type DiagnosticEntry,
   toDiagnosticErrorMessage,
@@ -424,6 +425,7 @@ interface ACPAgentSessionOptions {
   handle?: AgentPersistenceHandle;
   agentId?: string;
   launchEnv?: Record<string, string>;
+  launchStrategy?: ProcessLaunchStrategy;
   waitForInitialCommands?: boolean;
   initialCommandsWaitTimeoutMs?: number;
   terminateProcess?: ProcessTerminator;
@@ -784,6 +786,7 @@ export class ACPAgentClient implements AgentClient {
         capabilities: this.capabilities,
         agentId: launchContext?.agentId,
         launchEnv: launchContext?.env,
+        launchStrategy: launchContext?.launchStrategy,
         extensionCommandsParser: this.extensionCommandsParser,
         waitForInitialCommands: this.waitForInitialCommands,
         initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
@@ -835,6 +838,7 @@ export class ACPAgentClient implements AgentClient {
       handle,
       agentId: launchContext?.agentId,
       launchEnv: launchContext?.env,
+      launchStrategy: launchContext?.launchStrategy,
       extensionCommandsParser: this.extensionCommandsParser,
       waitForInitialCommands: this.waitForInitialCommands,
       initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
@@ -1295,6 +1299,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   ) => Promise<void>;
   private readonly agentId?: string;
   private readonly launchEnv?: Record<string, string>;
+  private readonly launchStrategy?: ProcessLaunchStrategy;
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private readonly pendingPermissions = new Map<string, PendingPermission>();
   private pendingUserMessage: PendingUserMessage | null = null;
@@ -1354,6 +1359,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.availableModes = options.defaultModes;
     this.agentId = options.agentId;
     this.launchEnv = options.launchEnv;
+    this.launchStrategy = options.launchStrategy;
     this.initialHandle = options.handle;
     this.config = { ...config, provider: options.provider };
     this.currentMode = config.modeId ?? null;
@@ -2320,14 +2326,21 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
     const command = prefix.command;
     const args = [...prefix.args, ...this.defaultCommand.slice(1)];
-    const child = spawnProcess(command, args, {
-      cwd: this.config.cwd,
-      ...createProviderEnvSpec({
-        runtimeSettings: this.runtimeSettings,
-        overlays: [this.launchEnv],
-      }),
-      stdio: ["pipe", "pipe", "pipe"],
+    const envSpec = createProviderEnvSpec({
+      runtimeSettings: this.runtimeSettings,
+      overlays: [this.launchEnv],
     });
+    const child = this.launchStrategy
+      ? this.launchStrategy.spawn(command, args, {
+          cwd: this.config.cwd,
+          envOverlay: envSpec.envOverlay,
+          stdio: ["pipe", "pipe", "pipe"],
+        })
+      : spawnProcess(command, args, {
+          cwd: this.config.cwd,
+          ...envSpec,
+          stdio: ["pipe", "pipe", "pipe"],
+        });
     assertChildWithPipes(child);
 
     const stderrChunks: string[] = [];

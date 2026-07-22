@@ -2,6 +2,7 @@ import type { Options as ClaudeAgentOptions } from "@anthropic-ai/claude-agent-s
 import type { AgentProviderNotice } from "@getpaseo/protocol/agent-types";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import type { PaseoToolCatalog } from "./tools/types.js";
+import type { ProcessLaunchStrategy } from "../devcontainer/launch-strategy.js";
 
 export type { AgentProviderNotice };
 
@@ -592,6 +593,13 @@ export interface AgentLaunchContext {
    * AgentSessionConfig; providers may adapt it to their native tool surface.
    */
   paseoTools?: PaseoToolCatalog;
+  /**
+   * Process launch strategy for dev container support. When present, providers
+   * should route process spawning through this strategy instead of spawning
+   * directly on the host. When absent, providers spawn locally as before.
+   * This is runtime-only and must never be persisted.
+   */
+  launchStrategy?: ProcessLaunchStrategy;
 }
 
 export interface AgentCreateSessionOptions {
