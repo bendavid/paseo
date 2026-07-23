@@ -22,6 +22,7 @@ import {
   type WorkspaceSetupSnapshot,
   type WorkspaceDescriptorPayload,
 } from "./messages.js";
+import type { LaunchStrategyRegistry } from "./devcontainer/launch-strategy-registry.js";
 import type {
   TerminalManager,
   TerminalWorkspaceContributionChangedEvent,
@@ -441,6 +442,7 @@ export interface SessionOptions {
   hubRelationships?: HubRelationshipManagement;
   serviceProxy?: ServiceProxySubsystem;
   scriptRuntimeStore?: WorkspaceScriptRuntimeStore;
+  launchStrategyRegistry?: LaunchStrategyRegistry;
   workspaceSetupSnapshots?: Map<string, WorkspaceSetupSnapshot>;
   onBranchChanged?: (
     workspaceId: string,
@@ -623,6 +625,7 @@ export class Session {
   private inflightRequests = 0;
   private peakInflightRequests = 0;
   private readonly workspaceSetupSnapshots: Map<string, WorkspaceSetupSnapshot>;
+  private readonly launchStrategyRegistry: LaunchStrategyRegistry | null;
   private readonly workspaceGitObserver: WorkspaceGitObserverService;
   private readonly workspaceDirectory: WorkspaceDirectory;
   private readonly voiceSession: VoiceSession;
@@ -676,6 +679,7 @@ export class Session {
       providerUsageService,
       serviceProxy,
       scriptRuntimeStore,
+      launchStrategyRegistry,
       workspaceSetupSnapshots,
       onBranchChanged,
       getDaemonTcpPort,
@@ -925,6 +929,7 @@ export class Session {
     this.serviceProxy = serviceProxy ?? null;
     this.scriptRuntimeStore = scriptRuntimeStore ?? null;
     this.workspaceSetupSnapshots = workspaceSetupSnapshots ?? new Map();
+    this.launchStrategyRegistry = launchStrategyRegistry ?? null;
     this.getDaemonTcpPort = getDaemonTcpPort ?? null;
     this.getDaemonTcpHost = getDaemonTcpHost ?? null;
     this.serviceProxyPublicBaseUrl = serviceProxyPublicBaseUrl ?? null;
@@ -4213,6 +4218,9 @@ export class Session {
         ? {
             project: await this.buildProjectPlacementForWorkspace(workspace, resolvedProjectRecord),
           }
+        : {}),
+      ...(this.launchStrategyRegistry?.hasContainerStrategy(workspace.cwd)
+        ? { containerStatus: "running" as const }
         : {}),
     };
   }

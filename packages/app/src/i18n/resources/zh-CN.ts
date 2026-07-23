@@ -580,6 +580,11 @@ export const zhCN: TranslationResources = {
         copyBranchName: "复制分支名称",
         showSetup: "显示 setup",
       },
+      container: {
+        running: "在容器中运行",
+        starting: "正在启动容器",
+        stopped: "容器已停止",
+      },
       toasts: {
         workspacePathUnavailable: "Workspace 路径尚不可用",
         branchNameUnavailable: "分支名称不可用",

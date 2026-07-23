@@ -584,6 +584,11 @@ export const ar: TranslationResources = {
         copyBranchName: "انسخ اسم الفرع",
         showSetup: "إظهار الإعداد",
       },
+      container: {
+        running: "يعمل في حاوية",
+        starting: "بدء الحاوية",
+        stopped: "توقفت الحاوية",
+      },
       toasts: {
         workspacePathUnavailable: "مسار Workspace غير متاح بعد",
         branchNameUnavailable: "اسم الفرع غير متوفر",

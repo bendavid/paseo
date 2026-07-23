@@ -1,12 +1,14 @@
 import { type ChildProcess, type SpawnOptions } from "node:child_process";
 import type { ProcessEnvRecord } from "../paseo-env.js";
+import type { ExecutionHandle } from "./container-backend.js";
 
 /**
  * ProcessLaunchStrategy — the central abstraction that determines whether a
- * process spawns locally (default) or inside a dev container (via docker exec).
+ * process spawns locally (default) or inside an isolated execution
+ * environment (container, pod, VM, etc.) via the backend's exec mechanism.
  *
- * Resolved per workspace: a workspace with a running dev container gets a
- * DevContainerLaunchStrategy; all others get LocalLaunchStrategy.
+ * Resolved per workspace: a workspace with a running environment gets a
+ * ContainerExecLaunchStrategy; all others get LocalLaunchStrategy.
  *
  * Three process categories route through this:
  *   1. Agent processes (ACP and direct providers)
@@ -14,8 +16,8 @@ import type { ProcessEnvRecord } from "../paseo-env.js";
  *   3. Git commands (runGitCommand)
  *
  * Git lifecycle operations (worktree add/remove) always use local execution
- * because the container may not exist yet. The strategy transition happens
- * when the dev container becomes available.
+ * because the environment may not exist yet. The strategy transition happens
+ * when the environment becomes available.
  */
 
 export interface LaunchSpawnOptions {
@@ -27,7 +29,7 @@ export interface LaunchSpawnOptions {
   stdio?: SpawnOptions["stdio"];
 }
 
-/** The command and args to actually execute, possibly wrapped in docker exec. */
+/** The command and args to actually execute, possibly wrapped in an exec call. */
 export interface ResolvedCommand {
   command: string;
   args: string[];
@@ -36,13 +38,13 @@ export interface ResolvedCommand {
 export interface ProcessLaunchStrategy {
   /**
    * Spawn a child process. For local execution, this is a direct spawn.
-   * For container execution, this wraps the command in `docker exec`.
+   * For container execution, this wraps the command in the backend's exec.
    */
   spawn(command: string, args: string[], options?: LaunchSpawnOptions): ChildProcess;
 
   /**
-   * Resolve the command and args to execute, wrapping in `docker exec` when
-   * inside a container. Used by callers that need to spawn via a different
+   * Resolve the command and args to execute, wrapping in the backend's exec
+   * when inside a container. Used by callers that need to spawn via a different
    * mechanism (e.g. node-pty's pty.spawn for terminals).
    */
   wrapCommand(command: string, args: string[], options?: { cwd?: string }): ResolvedCommand;
@@ -50,19 +52,19 @@ export interface ProcessLaunchStrategy {
   /**
    * Map a host-side cwd to the execution context's cwd.
    * For local execution, returns the host path unchanged.
-   * For container execution, returns the container workspace folder.
+   * For container execution, returns the environment's workspace folder.
    */
   resolveCwd(hostCwd: string): string;
 
-  /** Whether this strategy executes inside a dev container */
-  readonly isContainer: boolean;
+  /** Whether this strategy executes inside an isolated environment */
+  readonly isIsolated: boolean;
 }
 
 /**
  * LocalLaunchStrategy — today's behavior. Spawns processes directly on the host.
  */
 export class LocalLaunchStrategy implements ProcessLaunchStrategy {
-  readonly isContainer = false;
+  readonly isIsolated = false;
 
   spawn(command: string, args: string[], options?: LaunchSpawnOptions): ChildProcess {
     // Defer import to avoid circular module loading at module-eval time.
@@ -77,5 +79,98 @@ export class LocalLaunchStrategy implements ProcessLaunchStrategy {
 
   resolveCwd(hostCwd: string): string {
     return hostCwd;
+  }
+}
+
+/**
+ * ContainerExecLaunchStrategy — routes process spawning into a running
+ * isolated environment via a configurable exec command.
+ *
+ * This strategy is generic: it takes an exec command prefix (e.g.
+ * `["docker", "exec", "-i", "-u", "<user>", "-w", "<cwd>", "<id>"]`)
+ * and prepends it to every spawned command. The prefix is constructed by
+ * the backend that created the ExecutionHandle, so this class has no
+ * knowledge of Docker, Podman, Kubernetes, or any specific runtime.
+ */
+export class ContainerExecLaunchStrategy implements ProcessLaunchStrategy {
+  readonly isIsolated = true;
+
+  private readonly handle: ExecutionHandle;
+  private readonly execCommand: string;
+  private readonly execArgsPrefix: string[];
+  private readonly hostWorkspaceFolder: string;
+
+  constructor(options: {
+    handle: ExecutionHandle;
+    /** Command to exec into the environment (e.g. "docker", "podman", "kubectl") */
+    execCommand: string;
+    /** Args before the target command (e.g. ["exec", "-u", "node", "-w", "/ws", "<id>"]) */
+    execArgsPrefix: string[];
+    hostWorkspaceFolder: string;
+  }) {
+    this.handle = options.handle;
+    this.execCommand = options.execCommand;
+    this.execArgsPrefix = options.execArgsPrefix;
+    this.hostWorkspaceFolder = options.hostWorkspaceFolder;
+  }
+
+  spawn(command: string, args: string[], options?: LaunchSpawnOptions): ChildProcess {
+    const { spawn } = require("node:child_process") as typeof import("node:child_process");
+    const containerCwd = options?.cwd
+      ? this.resolveCwd(options.cwd)
+      : this.handle.remoteWorkspaceFolder;
+
+    const execArgs = [...this.execArgsPrefix, "-w", containerCwd];
+
+    // Pass env overlays as -e flags. The environment's own env is inherited
+    // by the exec; we only need to add the overlay variables.
+    if (options?.envOverlay) {
+      for (const [key, value] of Object.entries(options.envOverlay)) {
+        execArgs.push("-e", `${key}=${value}`);
+      }
+    }
+
+    execArgs.push(command, ...args);
+
+    // Use a minimal host env to avoid leaking host-specific paths.
+    const childEnv: NodeJS.ProcessEnv = { ...process.env };
+    delete childEnv.PATH;
+
+    return spawn(this.execCommand, execArgs, {
+      cwd: this.hostWorkspaceFolder,
+      env: childEnv,
+      stdio: options?.stdio ?? ["pipe", "pipe", "pipe"],
+      windowsHide: true,
+    });
+  }
+
+  wrapCommand(command: string, args: string[], options?: { cwd?: string }): ResolvedCommand {
+    const containerCwd = options?.cwd
+      ? this.resolveCwd(options.cwd)
+      : this.handle.remoteWorkspaceFolder;
+    // For terminals, insert -it for interactive mode after "exec".
+    const execArgs = [...this.execArgsPrefix];
+    const execIndex = execArgs.indexOf("exec");
+    if (execIndex >= 0) {
+      execArgs.splice(execIndex + 1, 0, "-it");
+    }
+    execArgs.push("-w", containerCwd, command, ...args);
+    return {
+      command: this.execCommand,
+      args: execArgs,
+    };
+  }
+
+  resolveCwd(hostCwd: string): string {
+    const { resolve } = require("node:path") as typeof import("node:path");
+    const resolved = resolve(hostCwd);
+    if (resolved === this.hostWorkspaceFolder) {
+      return this.handle.remoteWorkspaceFolder;
+    }
+    if (resolved.startsWith(this.hostWorkspaceFolder + "/")) {
+      const relative = resolved.slice(this.hostWorkspaceFolder.length);
+      return this.handle.remoteWorkspaceFolder + relative;
+    }
+    return this.handle.remoteWorkspaceFolder;
   }
 }

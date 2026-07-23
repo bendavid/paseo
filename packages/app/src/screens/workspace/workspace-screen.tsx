@@ -20,6 +20,7 @@ import { useTranslation } from "react-i18next";
 import { DiffStat } from "@/components/diff-stat";
 import {
   CopyX,
+  Container,
   ArrowLeftToLine,
   ArrowRightToLine,
   ChevronDown,
@@ -258,8 +259,8 @@ const ThemedGlobe = withUnistyles(Globe);
 const ThemedImport = withUnistyles(ImportIcon);
 const ThemedSettings = withUnistyles(Settings);
 const ThemedPanelRight = withUnistyles(PanelRight);
+const ThemedContainer = withUnistyles(Container);
 const ThemedSourceControlPanelIcon = withUnistyles(SourceControlPanelIcon);
-
 interface DynamicProviderIconProps {
   iconKey: string;
   size: number;
@@ -275,6 +276,7 @@ const ThemedDynamicProviderIcon = withUnistyles(DynamicProviderIcon);
 
 const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
+const greenColorMapping = (theme: Theme) => ({ color: theme.colors.palette.green[500] });
 const extraMutedColorMapping = (theme: Theme) => ({
   color: theme.colors.foregroundExtraMuted,
 });
@@ -1199,6 +1201,7 @@ interface WorkspaceHeaderTitleBarProps {
   subtitle: string;
   showSubtitle: boolean;
   currentBranchName: string | null;
+  containerStatus?: "running" | "starting" | "stopped";
   normalizedServerId: string;
   normalizedWorkspaceId: string;
   workspaceScripts: WorkspaceDescriptor["scripts"];
@@ -1234,6 +1237,7 @@ function WorkspaceHeaderTitleBar({
   subtitle,
   showSubtitle,
   currentBranchName,
+  containerStatus,
   normalizedServerId,
   normalizedWorkspaceId,
   workspaceScripts,
@@ -1262,6 +1266,7 @@ function WorkspaceHeaderTitleBar({
   onViewScriptTerminal,
   onOpenUrlInBrowserTab,
 }: WorkspaceHeaderTitleBarProps) {
+  const { t } = useTranslation();
   return (
     <View style={styles.headerTitleContainer}>
       {isLoading ? (
@@ -1271,6 +1276,17 @@ function WorkspaceHeaderTitleBar({
       ) : (
         <View style={styles.headerTitleTextGroup}>
           <ScreenTitle testID="workspace-header-title">{title}</ScreenTitle>
+          {containerStatus ? (
+            <View style={styles.containerBadge} testID="workspace-container-badge">
+              <ThemedContainer
+                size={12}
+                uniProps={containerStatus === "running" ? greenColorMapping : mutedColorMapping}
+              />
+              <Text style={styles.containerBadgeText}>
+                {t(`workspace.header.container.${containerStatus}`)}
+              </Text>
+            </View>
+          ) : null}
           {showSubtitle ? (
             <Text
               testID="workspace-header-subtitle"
@@ -3737,6 +3753,7 @@ function WorkspaceScreenContent({
                 isLoading={isWorkspaceHeaderLoading}
                 title={workspaceHeaderTitle}
                 subtitle={workspaceHeaderSubtitle}
+                containerStatus={workspaceDescriptor?.containerStatus ?? undefined}
                 showSubtitle={shouldShowWorkspaceHeaderSubtitle}
                 currentBranchName={currentBranchName}
                 normalizedServerId={normalizedServerId}
@@ -3954,6 +3971,19 @@ const styles = StyleSheet.create((theme) => ({
     flexShrink: 1,
     minWidth: 0,
     maxWidth: "60%",
+  },
+  containerBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: theme.spacing[1],
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: theme.colors.surface2,
+  },
+  containerBadgeText: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
   },
   headerTitleSkeleton: {
     width: 220,

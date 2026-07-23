@@ -837,7 +837,7 @@ async function createPtyProcess(input: CreatePtyProcessInput) {
     name: "xterm-256color",
     cols,
     rows,
-    cwd: launchStrategy?.isContainer ? launchStrategy.resolveCwd(cwd) : cwd,
+    cwd: launchStrategy?.isIsolated ? launchStrategy.resolveCwd(cwd) : cwd,
     env: buildTerminalEnvironment({
       shell: spawnCommand,
       env: {

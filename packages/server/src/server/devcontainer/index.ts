@@ -1,18 +1,19 @@
-export { discoverDevContainerConfig, type DevContainerConfigPath } from "./config-discovery.js";
+export { discoverDevContainerConfig } from "./config-discovery.js";
 export {
-  createDevContainerService,
-  type DevContainerService,
-  type DevContainerHandle,
-  type DevContainerUpOptions,
-} from "./devcontainer-service.js";
+  type ContainerBackend,
+  type ContainerUpOptions,
+  type ExecutionHandle,
+} from "./container-backend.js";
 export {
   type ProcessLaunchStrategy,
   type LaunchSpawnOptions,
   type ResolvedCommand,
   LocalLaunchStrategy,
+  ContainerExecLaunchStrategy,
 } from "./launch-strategy.js";
-export { DevContainerLaunchStrategy } from "./container-launch-strategy.js";
 export {
   type LaunchStrategyRegistry,
+  type LaunchStrategyFactory,
   createLaunchStrategyRegistry,
 } from "./launch-strategy-registry.js";
+export { createDevContainerBackend } from "./devcontainer-service.js";

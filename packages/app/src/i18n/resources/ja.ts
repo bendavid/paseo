@@ -586,6 +586,11 @@ export const ja: TranslationResources = {
         copyBranchName: "ブランチ名をコピー",
         showSetup: "セットアップを表示",
       },
+      container: {
+        running: "コンテナで実行中",
+        starting: "コンテナを起動中",
+        stopped: "コンテナが停止しました",
+      },
       toasts: {
         workspacePathUnavailable: "ワークスペースパスはまだ利用できません",
         branchNameUnavailable: "ブランチ名が利用できません",

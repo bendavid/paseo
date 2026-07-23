@@ -581,6 +581,11 @@ export const en = {
         copyBranchName: "Copy branch name",
         showSetup: "Show setup",
       },
+      container: {
+        running: "Running in container",
+        starting: "Starting container",
+        stopped: "Container stopped",
+      },
       toasts: {
         workspacePathUnavailable: "Workspace path is not available yet",
         branchNameUnavailable: "Branch name not available",

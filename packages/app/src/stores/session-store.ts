@@ -144,6 +144,7 @@ export interface WorkspaceDescriptor {
   gitRuntime?: WorkspaceDescriptorPayload["gitRuntime"];
   githubRuntime?: WorkspaceDescriptorPayload["githubRuntime"];
   forge?: WorkspaceDescriptorPayload["forge"];
+  containerStatus?: WorkspaceDescriptorPayload["containerStatus"];
   project?: ProjectPlacementPayload;
 }
 
@@ -178,6 +179,7 @@ export function normalizeWorkspaceDescriptor(
     gitRuntime: payload.gitRuntime,
     githubRuntime: payload.githubRuntime,
     forge: payload.forge,
+    containerStatus: payload.containerStatus,
     project: payload.project,
   };
 }

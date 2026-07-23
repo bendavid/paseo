@@ -126,7 +126,7 @@ import type { OpenAiSpeechProviderConfig } from "./speech/providers/openai/confi
 import type { LocalSpeechProviderConfig } from "./speech/providers/local/config.js";
 import type { RequestedSpeechProviders } from "./speech/speech-types.js";
 import { createSpeechService } from "./speech/speech-runtime.js";
-import { createDevContainerService, createLaunchStrategyRegistry } from "./devcontainer/index.js";
+import { createDevContainerBackend, createLaunchStrategyRegistry } from "./devcontainer/index.js";
 import { runGitCommand, type GitCommandOptions } from "../utils/run-git-command.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import { AgentStorage } from "./agent/agent-storage.js";
@@ -584,19 +584,22 @@ export async function createPaseoDaemon(
   });
   applyTerminalAgentHookSetting({ store: daemonConfigStore, logger });
 
-  // Dev container support — check whether the devcontainer CLI and Docker are
+  // Isolated execution support — check whether a container backend is
   // available on this host. The result is advertised as a server_info feature
-  // flag so clients can gate dev container UI on daemon capability.
-  const devContainerService = createDevContainerService({ logger });
+  // flag so clients can gate container UI on daemon capability.
+  // Currently only the devcontainer backend (devcontainer CLI + Docker) is
+  // supported, but the architecture is pluggable: swap createDevContainerBackend
+  // for a different ContainerBackend implementation to support Podman, K8s, etc.
+  const containerBackend = createDevContainerBackend({ logger });
   const launchStrategyRegistry = createLaunchStrategyRegistry({
     logger,
-    devContainerService,
+    createStrategy: containerBackend.createStrategy,
   });
-  const devContainerAvailable = await devContainerService.isAvailable();
+  const devContainerAvailable = await containerBackend.isAvailable();
   if (devContainerAvailable) {
-    logger.info("Dev container support is available (devcontainer CLI + Docker detected)");
+    logger.info("Isolated execution support is available (devcontainer CLI + Docker detected)");
   } else {
-    logger.debug("Dev container support is not available");
+    logger.debug("Isolated execution support is not available");
   }
 
   const serviceProxyPublicBaseUrl = config.serviceProxy?.publicBaseUrl
@@ -1597,6 +1600,7 @@ export async function createPaseoDaemon(
               browserToolsBroker,
               hubRelationships,
               devContainerAvailable,
+              launchStrategyRegistry,
             );
             await hubRelationships.start();
 

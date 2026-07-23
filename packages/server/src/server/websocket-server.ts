@@ -97,7 +97,7 @@ import {
   physicalSocketHasCapacity,
   sendBoundedPhysicalFrame,
 } from "./websocket/physical-socket.js";
-
+import type { LaunchStrategyRegistry } from "./devcontainer/launch-strategy-registry.js";
 const WS_CLOSE_DAEMON_AUTH_FAILED = 4401;
 
 export interface ExternalSocketMetadata {
@@ -546,6 +546,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly hubRelationships: HubRelationshipManagement | null;
   private readonly browserToolsRegistrations = new Map<string, BrowserToolsRegistration>();
   private readonly devContainerAvailable: boolean;
+  private readonly launchStrategyRegistry: LaunchStrategyRegistry | null;
   private acceptingConnections = true;
 
   constructor(
@@ -593,6 +594,7 @@ export class VoiceAssistantWebSocketServer {
     browserToolsBroker?: BrowserToolsBroker | null,
     hubRelationships?: HubRelationshipManagement | null,
     devContainerAvailable?: boolean,
+    launchStrategyRegistry?: LaunchStrategyRegistry,
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.serverId = serverId;
@@ -604,6 +606,7 @@ export class VoiceAssistantWebSocketServer {
     this.browserToolsBroker = browserToolsBroker ?? null;
     this.hubRelationships = hubRelationships ?? null;
     this.devContainerAvailable = devContainerAvailable ?? false;
+    this.launchStrategyRegistry = launchStrategyRegistry ?? null;
     this.agentManager = agentManager;
     this.agentStorage = agentStorage;
     this.projectRegistry = projectRegistry ?? createNoopProjectRegistry();
@@ -1311,6 +1314,7 @@ export class VoiceAssistantWebSocketServer {
       hubRelationships: options.hubRelationships,
       serviceProxy: this.serviceProxy ?? undefined,
       scriptRuntimeStore: this.scriptRuntimeStore ?? undefined,
+      launchStrategyRegistry: this.launchStrategyRegistry ?? undefined,
       workspaceSetupSnapshots: this.workspaceSetupSnapshots,
       onBranchChanged: this.onBranchChanged ?? undefined,
       getDaemonTcpPort: this.getDaemonTcpPort ?? undefined,

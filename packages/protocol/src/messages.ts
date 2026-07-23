@@ -3138,6 +3138,10 @@ export const WorkspaceDescriptorPayloadSchema = z
     // Old daemons omit it; absent means the client falls back to GitHub.
     forge: z.string().optional(),
     project: ProjectPlacementPayloadSchema.optional(),
+    // COMPAT(devContainers): added in v0.2.0, remove gate after 2027-07-22.
+    // Whether this workspace is running inside an isolated execution environment
+    // (dev container, pod, VM, etc.). Absent means local execution (old daemons).
+    containerStatus: z.enum(["running", "starting", "stopped"]).nullish().optional(),
   })
   .transform((workspace) => ({
     ...workspace,

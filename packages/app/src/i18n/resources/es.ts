@@ -589,6 +589,11 @@ export const es: TranslationResources = {
         copyBranchName: "Copiar nombre de sucursal",
         showSetup: "Mostrar configuración",
       },
+      container: {
+        running: "Ejecutando en contenedor",
+        starting: "Iniciando contenedor",
+        stopped: "Contenedor detenido",
+      },
       toasts: {
         workspacePathUnavailable: "La rutaWorkspaceaún no está disponible",
         branchNameUnavailable: "Nombre de la sucursal no disponible",

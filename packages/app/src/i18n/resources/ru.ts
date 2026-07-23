@@ -589,6 +589,11 @@ export const ru: TranslationResources = {
         copyBranchName: "Скопировать название ветки",
         showSetup: "Показать настройки",
       },
+      container: {
+        running: "Запуск в контейнере",
+        starting: "Запуск контейнера",
+        stopped: "Контейнер остановлен",
+      },
       toasts: {
         workspacePathUnavailable: "Путь Workspace пока недоступен.",
         branchNameUnavailable: "Название филиала недоступно",

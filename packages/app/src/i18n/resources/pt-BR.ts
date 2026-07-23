@@ -587,6 +587,11 @@ export const ptBR: TranslationResources = {
         copyBranchName: "Copiar nome da branch",
         showSetup: "Mostrar configuração",
       },
+      container: {
+        running: "Executando em contêiner",
+        starting: "Iniciando contêiner",
+        stopped: "Contêiner parado",
+      },
       toasts: {
         workspacePathUnavailable: "O caminho do workspace ainda não está disponível",
         branchNameUnavailable: "Nome da branch indisponível",
