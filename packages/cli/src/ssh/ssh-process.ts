@@ -50,7 +50,27 @@ export function sshExec(
   options?: SshExecOptions,
 ): Promise<SshExecResult> {
   return new Promise((resolve) => {
-    const args = [...buildSshBaseArgs(config), command];
+    // SSH exec runs commands in a non-login non-interactive shell, so profile
+    // files that set up PATH (e.g. for nvm, or MIT Athena's `add` system) are
+    // never sourced. Detect the user's login shell from /etc/passwd and run the
+    // command through it with login mode (-l -c), which sources the right
+    // profile files regardless of shell type (tcsh→.login, bash→.bash_profile,
+    // zsh→.zprofile). Falls back to /bin/sh.
+    // The outer sh -c ensures POSIX syntax works regardless of the user's
+    // default shell (tcsh, zsh, etc). Inside, we detect the user's login shell
+    // from /etc/passwd and exec through it with -l (login mode) so the right
+    // profile files are sourced (tcsh→.login, bash→.bash_profile, zsh→.zprofile).
+    // Escape single quotes for the outer sh -c '...' wrapper, and double quotes
+    // for the inner login-shell -c "..." wrapper.
+    const escapedForSingle = command.replace(/'/g, "'\\''");
+    const escapedForDouble = escapedForSingle.replace(/"/g, '\\"');
+    const wrappedCommand =
+      'sh -c \'SHELL=$(getent passwd "$(whoami)" 2>/dev/null | cut -d: -f7); ' +
+      'exec "${SHELL:-/bin/sh}" -l -c "' +
+      escapedForDouble +
+      '"' +
+      "'";
+    const args = [...buildSshBaseArgs(config), wrappedCommand];
     const child = spawn("ssh", args, {
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,

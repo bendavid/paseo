@@ -10,6 +10,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import {
   app,
   autoUpdater as electronAutoUpdater,
@@ -96,6 +97,7 @@ import {
   type AgentDeepLinkTarget,
 } from "@getpaseo/protocol/agent-deep-link";
 import { AgentNavigationInbox, parseAgentDeepLinkFromArgv } from "./agent-navigation.js";
+import { SshTunnel, ensureRemoteDaemon, normalizeSshHostConfig } from "@getpaseo/cli/ssh";
 
 const DEV_SERVER_URL = process.env.EXPO_DEV_URL ?? "http://localhost:8081";
 const APP_SCHEME = "paseo";
@@ -105,6 +107,7 @@ const APP_NAME = process.env.PASEO_TEST_APP_NAME?.trim() || "Paseo";
 const UPDATE_QUIT_DEADLINE_MS = 5_000;
 const pendingBrowserWindowOpenRequests = new PendingBrowserWindowOpenRequests();
 const agentNavigationInbox = new AgentNavigationInbox();
+const sshTunnels = new Map<string, SshTunnel>();
 
 // A second-instance launch can arrive before the packaged protocol handler,
 // IPC handlers, and first window exist. Wait for full bootstrap, not just
@@ -594,6 +597,43 @@ ipcMain.handle("paseo:browser:copy-element", (_event, payload: unknown): boolean
   }
   return false;
 });
+
+function parseSshConfig(config: Record<string, unknown>) {
+  return normalizeSshHostConfig({
+    id: "desktop",
+    label: "desktop",
+    host: String(config.host ?? ""),
+    user: String(config.user ?? ""),
+    port: typeof config.port === "number" ? config.port : undefined,
+    ...(typeof config.identityFile === "string" ? { identityFile: config.identityFile } : {}),
+    remotePort: typeof config.remotePort === "number" ? config.remotePort : undefined,
+    remoteHome: typeof config.remoteHome === "string" ? config.remoteHome : undefined,
+    installDir: typeof config.installDir === "string" ? config.installDir : undefined,
+  });
+}
+
+ipcMain.handle("paseo:ssh:open-tunnel", async (_event, config: Record<string, unknown>) => {
+  const sshConfig = parseSshConfig(config);
+  const tunnel = await SshTunnel.open(sshConfig, sshConfig.remotePort);
+  const tunnelId = randomUUID();
+  sshTunnels.set(tunnelId, tunnel);
+  return { tunnelId, localPort: tunnel.localPort };
+});
+
+ipcMain.handle("paseo:ssh:close-tunnel", async (_event, tunnelId: string) => {
+  const tunnel = sshTunnels.get(tunnelId);
+  if (tunnel) {
+    tunnel.close();
+    sshTunnels.delete(tunnelId);
+  }
+});
+
+ipcMain.handle(
+  "paseo:ssh:ensure-remote-daemon",
+  async (_event, config: Record<string, unknown>) => {
+    return ensureRemoteDaemon({ config: parseSshConfig(config) });
+  },
+);
 
 protocol.registerSchemesAsPrivileged([
   {

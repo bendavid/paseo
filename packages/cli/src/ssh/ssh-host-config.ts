@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { resolvePaseoHome } from "@getpaseo/server";
+import { SshHostConnectionSchema } from "@getpaseo/protocol/host-connection-schema";
 
 /**
  * A saved remote SSH host. The CLI tunnels daemon WebSocket traffic through an
@@ -29,11 +30,17 @@ export interface SshHostConfig {
   /** Optional @getpaseo/cli version to install (default: the local CLI version). */
   packageVersion?: string;
 }
+const SSH_DEFAULTS = SshHostConnectionSchema.parse({
+  id: "defaults",
+  type: "ssh",
+  host: "defaults",
+  user: "defaults",
+});
 
-export const DEFAULT_SSH_PORT = 22;
-export const DEFAULT_REMOTE_PORT = 6767;
-export const DEFAULT_REMOTE_HOME = "~/.paseo";
-export const DEFAULT_INSTALL_DIR = "~/.paseo/cli";
+export const DEFAULT_SSH_PORT = SSH_DEFAULTS.port;
+export const DEFAULT_REMOTE_PORT = SSH_DEFAULTS.remotePort;
+export const DEFAULT_REMOTE_HOME = SSH_DEFAULTS.remoteHome;
+export const DEFAULT_INSTALL_DIR = SSH_DEFAULTS.installDir;
 
 const SSH_HOSTS_FILENAME = "ssh-hosts.json";
 const ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,62}$/;

@@ -1,5 +1,4 @@
 import { DaemonClient, type WebSocketLike } from "@getpaseo/client/internal/daemon-client";
-import { WebSocket } from "ws";
 import {
   loadSshHostRegistry,
   resolveSshHostConfig,
@@ -8,17 +7,7 @@ import {
 import { SshTunnel } from "./ssh-process.js";
 export { isSshHostUri } from "./ssh-host-config.js";
 import { ensureRemoteDaemon } from "./remote-daemon.js";
-
-/** Create a Node.js WebSocket factory (the `ws` package) for daemon connections. */
-export function createNodeWebSocketFactory(): (
-  url: string,
-  options?: { headers?: Record<string, string>; protocols?: string[] },
-) => WebSocketLike {
-  return (url, options) =>
-    new WebSocket(url, options?.protocols, {
-      headers: options?.headers,
-    }) as unknown as WebSocketLike;
-}
+import { createNodeWebSocketFactory } from "../utils/client.js";
 
 export interface ConnectViaSshOptions {
   /** Connect timeout in milliseconds. */

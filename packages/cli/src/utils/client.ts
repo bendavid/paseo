@@ -250,7 +250,7 @@ export function resolveDaemonPassword(host: string): string | undefined {
 /**
  * Create a WebSocket factory that works in Node.js
  */
-function createNodeWebSocketFactory() {
+export function createNodeWebSocketFactory() {
   return (
     url: string,
     options?: { headers?: Record<string, string>; protocols?: string[]; socketPath?: string },
