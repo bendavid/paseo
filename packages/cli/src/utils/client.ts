@@ -16,6 +16,7 @@ import path from "node:path";
 import { WebSocket } from "ws";
 import { getOrCreateCliClientId } from "./client-id.js";
 import { resolveCliVersion } from "../version.js";
+import { connectViaSsh, isSshHostUri } from "../ssh/ssh-connection.js";
 
 export interface ConnectOptions {
   host?: string;
@@ -59,7 +60,8 @@ export function buildDaemonConnectionCommandError(options: {
   return {
     code: "DAEMON_NOT_RUNNING",
     message: `Cannot connect to daemon at ${host}: ${message}`,
-    details: "Start the daemon with: paseo daemon start",
+    details:
+      "Start the daemon with: paseo daemon start, or connect to a remote host with --host ssh://<name> (see: paseo ssh add).",
   };
 }
 
@@ -354,6 +356,13 @@ export async function connectToDaemon(options?: ConnectOptions): Promise<DaemonC
   const nodeWebSocketFactory = createNodeWebSocketFactory();
 
   const explicitHost = options?.host ?? process.env.PASEO_HOST;
+  if (explicitHost && isSshHostUri(explicitHost)) {
+    return connectViaSsh(explicitHost, {
+      timeoutMs: timeout,
+      clientId,
+      appVersion: resolveCliVersion(),
+    });
+  }
   const offer = parseHostOfferOrNull(explicitHost);
   if (offer) {
     return connectViaRelayOffer(offer, clientId, timeout, nodeWebSocketFactory);
