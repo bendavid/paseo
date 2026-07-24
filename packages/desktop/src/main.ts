@@ -628,16 +628,24 @@ function parseSshConfig(config: Record<string, unknown>) {
 }
 ipcMain.handle("paseo:ssh:open-tunnel", async (_event, config: Record<string, unknown>) => {
   const sshConfig = parseSshConfig(config);
-  const tunnel = await SshTunnel.open(sshConfig, sshConfig.remotePort, {
-    askpassPath: sshAskpassScript,
-    controlPath: sshControlPath(sshConfig),
-  });
-  const tunnelId = randomUUID();
-  sshTunnels.set(tunnelId, tunnel);
-  return { tunnelId, localPort: tunnel.localPort };
+  console.log("[ssh] open-tunnel:", sshConfig.host, "port", sshConfig.port);
+  try {
+    const tunnel = await SshTunnel.open(sshConfig, sshConfig.remotePort, {
+      askpassPath: sshAskpassScript,
+      controlPath: sshControlPath(sshConfig),
+    });
+    const tunnelId = randomUUID();
+    sshTunnels.set(tunnelId, tunnel);
+    console.log("[ssh] tunnel open:", tunnelId, "localPort", tunnel.localPort);
+    return { tunnelId, localPort: tunnel.localPort };
+  } catch (err) {
+    console.error("[ssh] tunnel open failed:", err instanceof Error ? err.message : String(err));
+    throw err;
+  }
 });
 
 ipcMain.handle("paseo:ssh:close-tunnel", async (_event, tunnelId: string) => {
+  console.log("[ssh] close-tunnel:", tunnelId);
   const tunnel = sshTunnels.get(tunnelId);
   if (tunnel) {
     tunnel.close();
@@ -648,11 +656,20 @@ ipcMain.handle(
   "paseo:ssh:ensure-remote-daemon",
   async (_event, config: Record<string, unknown>) => {
     const sshConfig = parseSshConfig(config);
-    return ensureRemoteDaemon({
-      config: sshConfig,
-      askpassPath: sshAskpassScript,
-      controlPath: sshControlPath(sshConfig),
-    });
+    console.log("[ssh] ensure-remote-daemon:", sshConfig.host, "port", sshConfig.port);
+    try {
+      const result = await ensureRemoteDaemon({
+        config: sshConfig,
+        askpassPath: sshAskpassScript,
+        controlPath: sshControlPath(sshConfig),
+        onProgress: (msg) => console.log("[ssh] ensure progress:", msg),
+      });
+      console.log("[ssh] ensure result:", JSON.stringify(result));
+      return result;
+    } catch (err) {
+      console.error("[ssh] ensure failed:", err instanceof Error ? err.message : String(err));
+      throw err;
+    }
   },
 );
 

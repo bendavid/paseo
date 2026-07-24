@@ -92,10 +92,10 @@ export function buildEnsureScript(config: SshHostConfig, version: string): strin
   const portCheck = `node -e 'const n=require("net");const s=n.connect({port:${port},host:"127.0.0.1"});s.on("connect",()=>{s.end();process.exit(0)});s.on("error",()=>process.exit(1));setTimeout(()=>{s.destroy();process.exit(1)},3000)'`;
 
   return [
-    `# 1. Already running?`,
-    `${portCheck} && { echo "PROGRESS:Remote daemon is already running." >&2; exit 0; }`,
-    ``,
+    `# 1. Stop any existing daemon so we can restart with the right CORS config`,
+    `${portCheck} && { ${bin} daemon stop --home "${home}" >/dev/null 2>&1; sleep 1; } || true`,
     `# 2. Check node and npm`,
+    ``,
     `node -v >/dev/null 2>&1 && npm -v >/dev/null 2>&1 || { echo "PROGRESS:Node.js and npm are required on ${config.host}." >&2; exit 10; }`,
     ``,
     `# 3. Install Paseo if missing`,
@@ -112,9 +112,9 @@ export function buildEnsureScript(config: SshHostConfig, version: string): strin
     `echo "PROGRESS:Launching the Paseo daemon on ${config.host}…" >&2`,
     `mkdir -p "${home}"`,
     `if command -v systemd-run >/dev/null 2>&1 && [ -n "$XDG_RUNTIME_DIR" ]; then`,
-    `  systemd-run --user --scope --quiet ${bin} daemon start --home "${home}" --port ${port} --no-relay --no-mcp`,
+    `  systemd-run --user --scope --quiet env PASEO_CORS_ORIGINS=* ${bin} daemon start --home "${home}" --port ${port} --no-relay --no-mcp`,
     `else`,
-    `  ${bin} daemon start --home "${home}" --port ${port} --no-relay --no-mcp`,
+    `  PASEO_CORS_ORIGINS=* ${bin} daemon start --home "${home}" --port ${port} --no-relay --no-mcp`,
     `fi`,
     ``,
     `# 5. Wait for the port to accept connections`,
