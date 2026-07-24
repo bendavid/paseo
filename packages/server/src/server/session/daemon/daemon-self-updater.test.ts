@@ -36,7 +36,9 @@ function createRuntime(input: {
   prefix?: string | null;
   installResult?: CommandResult;
   inspectResult?: { version: string } | Error;
+  postInstallInspectResult?: { version: string } | Error;
 }): DaemonSelfUpdateRuntime {
+  let inspectCallCount = 0;
   return {
     npm: {
       async inspect() {
@@ -46,9 +48,15 @@ function createRuntime(input: {
         throw new Error("should not be called");
       },
       async inspectWithPrefix(prefix: string) {
-        if (input.inspectResult instanceof Error) throw input.inspectResult;
+        inspectCallCount++;
+        // First call is the pre-install verification; second is post-install version check.
+        const result =
+          inspectCallCount === 2 && input.postInstallInspectResult
+            ? input.postInstallInspectResult
+            : input.inspectResult;
+        if (result instanceof Error) throw result;
         return {
-          version: input.inspectResult?.version ?? "0.1.96",
+          version: result?.version ?? "0.1.96",
           packagePath: `${prefix}/node_modules/@getpaseo/cli`,
           globalRootPath: null,
           isLinked: false,
@@ -65,7 +73,6 @@ function createRuntime(input: {
     },
   };
 }
-
 async function runUpdate(input: {
   runtime: DaemonSelfUpdateRuntime;
   daemonVersion?: string | null;
@@ -138,7 +145,7 @@ describe("DaemonSelfUpdater", () => {
 
   test("succeeds even if post-install version inspection fails", async () => {
     const runtime = createRuntime({
-      inspectResult: new Error("npm not found after update"),
+      postInstallInspectResult: new Error("npm not found after update"),
     });
 
     const { result } = await runUpdate({ runtime });
@@ -177,6 +184,38 @@ describe("DaemonSelfUpdater", () => {
     expect(phases).toEqual(["starting"]);
   });
 
+  test("refuses to update a non-npm-managed install (e.g. system package manager)", async () => {
+    const runtime: DaemonSelfUpdateRuntime = {
+      npm: {
+        async inspect() {
+          throw new Error("should not be called");
+        },
+        async installLatest() {
+          throw new Error("should not be called");
+        },
+        async inspectWithPrefix() {
+          // npm ls doesn't find @getpaseo/cli — it's not npm-managed
+          throw new Error("@getpaseo/cli is not installed in /usr/lib");
+        },
+        async installLatestWithPrefix() {
+          throw new Error("should not be called");
+        },
+      },
+      installOrigin: {
+        resolveCurrentServerPackageRoot() {
+          return "/usr/lib/node_modules/@getpaseo/server";
+        },
+      },
+    };
+
+    const { result, phases } = await runUpdate({ runtime });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toBe(
+      "This daemon is not running from an npm-managed @getpaseo/cli install. If installed via a system package manager, update it with that package manager.",
+    );
+    expect(phases).toEqual(["starting"]);
+  });
   test("rejects concurrent update requests", async () => {
     let resolveInstall: ((result: CommandResult) => void) | null = null;
     let installStartedResolve: (() => void) | null = null;

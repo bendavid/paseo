@@ -63,13 +63,26 @@ export class DaemonSelfUpdater {
     this.inProgress = true;
     try {
       input.onProgress("starting");
-
       // Find the npm prefix from the daemon's own install location.
       const prefix = resolveNpmPrefix(this.runtime.installOrigin);
       if (!prefix) {
         return {
           success: false,
           error: "Unable to determine the npm install prefix for this daemon.",
+          newVersion: null,
+        };
+      }
+
+      // Verify @getpaseo/cli is actually npm-managed at this prefix.
+      // System package manager installs (e.g. pacman, apt) may live under a
+      // node_modules directory but aren't npm-managed — npm ls would not find
+      // the package there.
+      try {
+        await this.runtime.npm.inspectWithPrefix(prefix);
+      } catch {
+        return {
+          success: false,
+          error: `This daemon is not running from an npm-managed @getpaseo/cli install. If installed via a system package manager, update it with that package manager.`,
           newVersion: null,
         };
       }
