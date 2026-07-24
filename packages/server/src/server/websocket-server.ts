@@ -98,8 +98,9 @@ import {
   sendBoundedPhysicalFrame,
 } from "./websocket/physical-socket.js";
 import type { LaunchStrategyRegistry } from "./devcontainer/launch-strategy-registry.js";
-const WS_CLOSE_DAEMON_AUTH_FAILED = 4401;
+import type { ContainerBackend } from "./devcontainer/container-backend.js";
 
+const WS_CLOSE_DAEMON_AUTH_FAILED = 4401;
 export interface ExternalSocketMetadata {
   transport: "relay";
   externalSessionKey?: string;
@@ -547,6 +548,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly browserToolsRegistrations = new Map<string, BrowserToolsRegistration>();
   private readonly devContainerAvailable: boolean;
   private readonly launchStrategyRegistry: LaunchStrategyRegistry | null;
+  private readonly containerBackend: ContainerBackend | null;
   private acceptingConnections = true;
 
   constructor(
@@ -595,6 +597,7 @@ export class VoiceAssistantWebSocketServer {
     hubRelationships?: HubRelationshipManagement | null,
     devContainerAvailable?: boolean,
     launchStrategyRegistry?: LaunchStrategyRegistry,
+    containerBackend?: ContainerBackend,
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.serverId = serverId;
@@ -607,6 +610,7 @@ export class VoiceAssistantWebSocketServer {
     this.hubRelationships = hubRelationships ?? null;
     this.devContainerAvailable = devContainerAvailable ?? false;
     this.launchStrategyRegistry = launchStrategyRegistry ?? null;
+    this.containerBackend = containerBackend ?? null;
     this.agentManager = agentManager;
     this.agentStorage = agentStorage;
     this.projectRegistry = projectRegistry ?? createNoopProjectRegistry();
@@ -1315,6 +1319,7 @@ export class VoiceAssistantWebSocketServer {
       serviceProxy: this.serviceProxy ?? undefined,
       scriptRuntimeStore: this.scriptRuntimeStore ?? undefined,
       launchStrategyRegistry: this.launchStrategyRegistry ?? undefined,
+      containerBackend: this.containerBackend ?? undefined,
       workspaceSetupSnapshots: this.workspaceSetupSnapshots,
       onBranchChanged: this.onBranchChanged ?? undefined,
       getDaemonTcpPort: this.getDaemonTcpPort ?? undefined,

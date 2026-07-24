@@ -23,6 +23,7 @@ import {
   type WorkspaceDescriptorPayload,
 } from "./messages.js";
 import type { LaunchStrategyRegistry } from "./devcontainer/launch-strategy-registry.js";
+import type { ContainerBackend } from "./devcontainer/container-backend.js";
 import type {
   TerminalManager,
   TerminalWorkspaceContributionChangedEvent,
@@ -443,6 +444,7 @@ export interface SessionOptions {
   serviceProxy?: ServiceProxySubsystem;
   scriptRuntimeStore?: WorkspaceScriptRuntimeStore;
   launchStrategyRegistry?: LaunchStrategyRegistry;
+  containerBackend?: ContainerBackend;
   workspaceSetupSnapshots?: Map<string, WorkspaceSetupSnapshot>;
   onBranchChanged?: (
     workspaceId: string,
@@ -554,6 +556,16 @@ function describeRegistryTransition(record: ArchivedRecordSnapshot | null): Regi
   return record.archivedAt ? "unarchived" : "existing";
 }
 
+function resolveContainerStatus(
+  registry: LaunchStrategyRegistry | null,
+  pending: Set<string>,
+  cwd: string,
+): { containerStatus: "running" | "starting" } | Record<string, never> {
+  if (registry?.hasContainerStrategy(cwd)) return { containerStatus: "running" };
+  if (pending.has(cwd)) return { containerStatus: "starting" };
+  return {};
+}
+
 /**
  * Session represents a single connected client session.
  * It owns all state management, orchestration logic, and message processing.
@@ -615,18 +627,20 @@ export class Session {
   } | null = null;
   private readonly terminalManager: TerminalManager | null;
   private readonly providerSnapshotManager: ProviderSnapshotManager;
-  private readonly serviceProxy: ServiceProxySubsystem | null;
-  private readonly scriptRuntimeStore: WorkspaceScriptRuntimeStore | null;
-  private readonly getDaemonTcpPort: (() => number | null) | null;
-  private readonly getDaemonTcpHost: (() => string | null) | null;
-  private readonly serviceProxyPublicBaseUrl: string | null;
-  private readonly resolveScriptHealth: ((hostname: string) => ScriptHealthState | null) | null;
+  private serviceProxy!: ServiceProxySubsystem | null;
+  private scriptRuntimeStore!: WorkspaceScriptRuntimeStore | null;
+  private getDaemonTcpPort!: (() => number | null) | null;
+  private getDaemonTcpHost!: (() => string | null) | null;
+  private serviceProxyPublicBaseUrl!: string | null;
+  private resolveScriptHealth!: ((hostname: string) => ScriptHealthState | null) | null;
+  private launchStrategyRegistry!: LaunchStrategyRegistry | null;
+  private containerBackend!: ContainerBackend | null;
+  private readonly pendingContainerActivations = new Set<string>();
+  private readonly workspaceGitObserver: WorkspaceGitObserverService;
   private readonly terminalController: TerminalSessionController;
   private inflightRequests = 0;
   private peakInflightRequests = 0;
-  private readonly workspaceSetupSnapshots: Map<string, WorkspaceSetupSnapshot>;
-  private readonly launchStrategyRegistry: LaunchStrategyRegistry | null;
-  private readonly workspaceGitObserver: WorkspaceGitObserverService;
+  private workspaceSetupSnapshots!: Map<string, WorkspaceSetupSnapshot>;
   private readonly workspaceDirectory: WorkspaceDirectory;
   private readonly voiceSession: VoiceSession;
   private readonly checkoutSession: CheckoutSession;
@@ -680,6 +694,7 @@ export class Session {
       serviceProxy,
       scriptRuntimeStore,
       launchStrategyRegistry,
+      containerBackend,
       workspaceSetupSnapshots,
       onBranchChanged,
       getDaemonTcpPort,
@@ -926,14 +941,17 @@ export class Session {
       logger: this.sessionLogger,
     });
     this.providerSnapshotManager = providerSnapshotManager;
-    this.serviceProxy = serviceProxy ?? null;
-    this.scriptRuntimeStore = scriptRuntimeStore ?? null;
-    this.workspaceSetupSnapshots = workspaceSetupSnapshots ?? new Map();
-    this.launchStrategyRegistry = launchStrategyRegistry ?? null;
-    this.getDaemonTcpPort = getDaemonTcpPort ?? null;
-    this.getDaemonTcpHost = getDaemonTcpHost ?? null;
-    this.serviceProxyPublicBaseUrl = serviceProxyPublicBaseUrl ?? null;
-    this.resolveScriptHealth = resolveScriptHealth ?? null;
+    this.assignOptionalServices({
+      serviceProxy,
+      scriptRuntimeStore,
+      workspaceSetupSnapshots,
+      launchStrategyRegistry,
+      containerBackend,
+      getDaemonTcpPort,
+      getDaemonTcpHost,
+      serviceProxyPublicBaseUrl,
+      resolveScriptHealth,
+    });
     this.workspaceScripts = createWorkspaceScriptsService({
       serviceProxy: this.serviceProxy,
       scriptRuntimeStore: this.scriptRuntimeStore,
@@ -1000,6 +1018,28 @@ export class Session {
     this.subscribeToRegistryMutations();
 
     this.sessionLogger.trace({}, "agent.session.lifecycle.created");
+  }
+
+  private assignOptionalServices(options: {
+    serviceProxy?: ServiceProxySubsystem;
+    scriptRuntimeStore?: WorkspaceScriptRuntimeStore;
+    workspaceSetupSnapshots?: Map<string, WorkspaceSetupSnapshot>;
+    launchStrategyRegistry?: LaunchStrategyRegistry;
+    containerBackend?: ContainerBackend;
+    getDaemonTcpPort?: () => number | null;
+    getDaemonTcpHost?: () => string | null;
+    serviceProxyPublicBaseUrl?: string | null;
+    resolveScriptHealth?: (hostname: string) => ScriptHealthState | null;
+  }): void {
+    this.serviceProxy = options.serviceProxy ?? null;
+    this.scriptRuntimeStore = options.scriptRuntimeStore ?? null;
+    this.workspaceSetupSnapshots = options.workspaceSetupSnapshots ?? new Map();
+    this.launchStrategyRegistry = options.launchStrategyRegistry ?? null;
+    this.containerBackend = options.containerBackend ?? null;
+    this.getDaemonTcpPort = options.getDaemonTcpPort ?? null;
+    this.getDaemonTcpHost = options.getDaemonTcpHost ?? null;
+    this.serviceProxyPublicBaseUrl = options.serviceProxyPublicBaseUrl ?? null;
+    this.resolveScriptHealth = options.resolveScriptHealth ?? null;
   }
 
   updateAppVersion(appVersion: string | null): void {
@@ -4185,6 +4225,7 @@ export class Session {
     workspace: PersistedWorkspaceRecord,
     projectRecord?: PersistedProjectRecord | null,
   ): Promise<WorkspaceDescriptorPayload> {
+    this.maybeStartContainerForWorkspace(workspace);
     const resolvedProjectRecord =
       projectRecord ?? (await this.projectRegistry.get(workspace.projectId));
 
@@ -4219,10 +4260,51 @@ export class Session {
             project: await this.buildProjectPlacementForWorkspace(workspace, resolvedProjectRecord),
           }
         : {}),
-      ...(this.launchStrategyRegistry?.hasContainerStrategy(workspace.cwd)
-        ? { containerStatus: "running" as const }
-        : {}),
+      ...resolveContainerStatus(
+        this.launchStrategyRegistry,
+        this.pendingContainerActivations,
+        workspace.cwd,
+      ),
     };
+  }
+
+  /**
+   * Lazily start a dev container for a workspace when a devcontainer.json is
+   * present and no container is already active. Fire-and-forget: the descriptor
+   * returns immediately with containerStatus "starting", and a workspace update
+   * is emitted once the container is up so the client sees the status change
+   * to "running".
+   */
+  private maybeStartContainerForWorkspace(workspace: PersistedWorkspaceRecord): void {
+    const backend = this.containerBackend;
+    const registry = this.launchStrategyRegistry;
+    if (!backend || !registry) return;
+    if (registry.hasContainerStrategy(workspace.cwd)) return;
+    if (this.pendingContainerActivations.has(workspace.cwd)) return;
+    if (!backend.hasConfig(workspace.cwd)) return;
+
+    const cwd = workspace.cwd;
+    this.pendingContainerActivations.add(cwd);
+    this.sessionLogger.info(
+      { workspaceId: workspace.workspaceId, cwd },
+      "Starting dev container for workspace",
+    );
+
+    void backend
+      .up({ workspaceFolder: cwd })
+      .then((handle) => {
+        registry.activateContainer(cwd, handle);
+        this.pendingContainerActivations.delete(cwd);
+        void this.emitWorkspaceUpdateForWorkspaceId(workspace.workspaceId);
+        return;
+      })
+      .catch((error) => {
+        this.pendingContainerActivations.delete(cwd);
+        this.sessionLogger.error(
+          { err: error, workspaceId: workspace.workspaceId, cwd },
+          "Failed to start dev container for workspace",
+        );
+      });
   }
 
   private buildWorkspaceGitRuntimePayload(

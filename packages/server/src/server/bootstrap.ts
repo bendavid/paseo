@@ -1601,6 +1601,7 @@ export async function createPaseoDaemon(
               hubRelationships,
               devContainerAvailable,
               launchStrategyRegistry,
+              containerBackend,
             );
             await hubRelationships.start();
 
