@@ -2426,6 +2426,16 @@ function parseHostAuthority(host: string): HostAuthority | null {
   return hostname && port ? { hostname, port } : null;
 }
 
+function defaultPortForOriginProtocol(protocol: string): string | null {
+  if (protocol === "http:") {
+    return "80";
+  }
+  if (protocol === "https:") {
+    return "443";
+  }
+  return null;
+}
+
 function isLoopbackAlias(hostname: string): boolean {
   const normalized = stripIpv6Brackets(hostname).toLowerCase();
   if (normalized === "localhost" || normalized.endsWith(".localhost")) {
@@ -2459,14 +2469,15 @@ export function isWebSocketSameOrigin(
   if (!requestAuthority) {
     return false;
   }
-  // Allow any loopback-to-loopback connection regardless of port. SSH tunnels
-  // create a port mismatch: the browser origin (e.g. Metro dev server on
-  // localhost:8083) differs from the tunnel port (e.g. localhost:35173), but
-  // both are loopback and the tunnel itself provides the trust boundary.
-  if (isLoopbackAlias(originUrl.hostname) && isLoopbackAlias(requestAuthority.hostname)) {
-    return true;
+  const originPort = originUrl.port || defaultPortForOriginProtocol(originUrl.protocol);
+  if (!originPort) {
+    return false;
   }
-  return false;
+  const requestPort = requestAuthority.port || defaultPortForOriginProtocol(originUrl.protocol);
+  if (originPort !== requestPort) {
+    return false;
+  }
+  return isLoopbackAlias(originUrl.hostname) && isLoopbackAlias(requestAuthority.hostname);
 }
 
 function selectWebSocketProtocol(

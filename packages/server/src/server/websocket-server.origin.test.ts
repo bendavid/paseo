@@ -14,9 +14,8 @@ describe("isWebSocketSameOrigin", () => {
     expect(isWebSocketSameOrigin("http://[::1]:32775", "localhost:32775")).toBe(true);
   });
 
-  test("allows loopback aliases on different ports (SSH tunnel case)", () => {
-    expect(isWebSocketSameOrigin("http://127.0.0.1:32775", "localhost:6767")).toBe(true);
-    expect(isWebSocketSameOrigin("http://localhost:8083", "127.0.0.1:35173")).toBe(true);
+  test("rejects loopback aliases on different ports", () => {
+    expect(isWebSocketSameOrigin("http://127.0.0.1:32775", "localhost:6767")).toBe(false);
   });
 
   test("rejects non-loopback cross-origin upgrades", () => {
