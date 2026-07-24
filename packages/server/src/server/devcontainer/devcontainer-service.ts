@@ -1,4 +1,6 @@
 import { resolve } from "node:path";
+import { createRequire } from "node:module";
+import { existsSync } from "node:fs";
 import type { Logger } from "pino";
 import { execCommand } from "../../utils/spawn.js";
 import { discoverDevContainerConfig } from "./config-discovery.js";
@@ -31,7 +33,7 @@ export function createDevContainerBackend(
   deps: DevContainerBackendDeps,
 ): ContainerBackend & { createStrategy: LaunchStrategyFactory } {
   const logger = deps.logger.child({ module: "devcontainer-backend" });
-  const devcontainerBin = deps.binaryPath ?? "devcontainer";
+  const devcontainerBin = deps.binaryPath ?? resolveDevContainerBinary();
   const dockerBin = deps.dockerBinaryPath ?? "docker";
 
   // Per-workspace handles, keyed by resolved workspace folder path.
@@ -41,7 +43,14 @@ export function createDevContainerBackend(
   async function isAvailable(): Promise<boolean> {
     if (availabilityCache !== null) return availabilityCache;
     try {
-      await execCommand("which", [devcontainerBin], { envMode: "internal" });
+      // Check devcontainer CLI: if it's a resolved path, verify it exists;
+      // if it's a bare name, check it's on PATH.
+      if (devcontainerBin.includes("/")) {
+        if (!existsSync(devcontainerBin)) throw new Error("devcontainer binary not found");
+      } else {
+        await execCommand("which", [devcontainerBin], { envMode: "internal" });
+      }
+      // Check docker is on PATH.
       await execCommand("which", [dockerBin], { envMode: "internal" });
       availabilityCache = true;
       logger.debug(
@@ -205,4 +214,19 @@ function parseDevContainerUpResult(stdout: string): DevContainerUpResult | null 
     }
   }
   return null;
+}
+
+/**
+ * Resolve the devcontainer CLI binary path. Tries the package-installed
+ * @devcontainers/cli first (via createRequire so it works regardless of
+ * the daemon's cwd or PATH), then falls back to "devcontainer" on PATH.
+ */
+function resolveDevContainerBinary(): string {
+  try {
+    const require = createRequire(import.meta.url);
+    const cliPath = require.resolve("@devcontainers/cli/devcontainer.js");
+    return cliPath;
+  } catch {
+    return "devcontainer";
+  }
 }
