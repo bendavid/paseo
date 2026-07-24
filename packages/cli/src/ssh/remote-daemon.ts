@@ -112,7 +112,7 @@ export function buildEnsureScript(config: SshHostConfig, version: string): strin
     `# 4. Launch the daemon detached`,
     `echo "PROGRESS:Launching the Paseo daemon on ${config.host}…" >&2`,
     `mkdir -p "${home}"`,
-    `nohup ${bin} daemon start --home "${home}" --port ${port} --no-relay --no-mcp </dev/null >"${log}" 2>&1 &`,
+    `setsid nohup ${bin} daemon start --home "${home}" --port ${port} --no-relay --no-mcp </dev/null >"${log}" 2>&1 &`,
     ``,
     `# 5. Wait for the port to accept connections`,
     `echo "PROGRESS:Waiting for the remote daemon to become ready…" >&2`,
