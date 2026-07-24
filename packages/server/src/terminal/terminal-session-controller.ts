@@ -553,18 +553,24 @@ export class TerminalSessionController {
         return;
       }
 
+      // Resolve the launch strategy in the parent process. The strategy
+      // object can't be serialized across the worker boundary, so we
+      // call wrapCommand here and pass the pre-wrapped command/args.
       const launchStrategy = this.resolveLaunchStrategy
         ? await this.resolveLaunchStrategy(msg.cwd)
+        : null;
+      const isIsolated = launchStrategy?.isIsolated ?? false;
+      const terminalCommand = isIsolated
+        ? launchStrategy!.wrapCommand(msg.command ?? "", msg.args ?? [], { cwd: msg.cwd })
         : null;
       const session = await this.terminalManager.createTerminal({
         cwd: msg.cwd,
         workspaceId,
         name: msg.name,
-        command: msg.command,
-        args: msg.args,
+        command: terminalCommand?.command ?? msg.command,
+        args: terminalCommand?.args ?? msg.args,
         rows: msg.size?.rows,
         cols: msg.size?.cols,
-        ...(launchStrategy?.isIsolated ? { launchStrategy } : {}),
       });
       this.ensureExitSubscription(session);
       this.emit({
