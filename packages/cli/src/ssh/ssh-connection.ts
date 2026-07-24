@@ -1,3 +1,6 @@
+import { createHash } from "node:crypto";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { DaemonClient, type WebSocketLike } from "@getpaseo/client/internal/daemon-client";
 import {
   loadSshHostRegistry,
@@ -46,14 +49,20 @@ export async function connectViaSsh(
   return connectViaSshConfig(config, options);
 }
 
+function sshControlPath(config: { host: string; port: number; user?: string }): string {
+  const key = `${config.user ?? ""}@${config.host}:${config.port}`;
+  const hash = createHash("sha256").update(key).digest("hex").slice(0, 12);
+  return path.join(tmpdir(), `paseo-ssh-${hash}.sock`);
+}
+
 /** Connect using an already-resolved {@link SshHostConfig}. */
 export async function connectViaSshConfig(
   config: SshHostConfig,
   options: ConnectViaSshOptions,
 ): Promise<DaemonClient> {
   const tty = process.stdin.isTTY === true;
-
-  const sshOptions = tty ? { tty } : {};
+  const controlPath = sshControlPath(config);
+  const sshOptions = { controlPath, ...(tty ? { tty } : {}) };
 
   await ensureRemoteDaemon({
     config,

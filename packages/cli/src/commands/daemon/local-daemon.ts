@@ -6,6 +6,36 @@ import { loadConfig, resolvePaseoHome, spawnProcess } from "@getpaseo/server";
 import treeKill from "tree-kill";
 import { tryConnectToDaemon } from "../../utils/client.js";
 
+/**
+ * Detect whether `systemd-run --user` is available. When it is, wrapping the
+ * daemon launch in `systemd-run --user --scope` moves the daemon into a new
+ * cgroup scope that survives the originating session (e.g. an SSH session)
+ * closing. Without this, systemd-logind with `KillUserProcesses=yes` kills the
+ * daemon when the SSH session that started it ends.
+ */
+let systemdRunUserAvailable: boolean | null = null;
+
+function isSystemdRunUserAvailable(): boolean {
+  if (systemdRunUserAvailable !== null) return systemdRunUserAvailable;
+  if (process.platform !== "linux") {
+    systemdRunUserAvailable = false;
+    return false;
+  }
+  // systemd-run --user requires a user session bus (XDG_RUNTIME_DIR is set by
+  // pam_systemd when a session is created).
+  if (!process.env.XDG_RUNTIME_DIR) {
+    systemdRunUserAvailable = false;
+    return false;
+  }
+  try {
+    const result = spawnSync("systemd-run", ["--version"], { timeout: 2000, stdio: "ignore" });
+    systemdRunUserAvailable = result.status === 0;
+  } catch {
+    systemdRunUserAvailable = false;
+  }
+  return systemdRunUserAvailable;
+}
+
 export interface DaemonStartOptions {
   port?: string;
   listen?: string;
@@ -586,9 +616,11 @@ export async function startLocalDaemonDetached(
 
   const paseoHome = runtime.resolveHome(childEnv);
   const logPath = path.join(paseoHome, DAEMON_LOG_FILENAME);
+  const daemonArgs = [...process.execArgv, daemonRunnerEntry, ...buildRunnerArgs(options)];
+  const useSystemdRun = isSystemdRunUserAvailable();
   const child = runtime.spawnDetached(
-    process.execPath,
-    [...process.execArgv, daemonRunnerEntry, ...buildRunnerArgs(options)],
+    useSystemdRun ? "systemd-run" : process.execPath,
+    useSystemdRun ? ["--user", "--scope", "--quiet", process.execPath, ...daemonArgs] : daemonArgs,
     {
       detached: true,
       envMode: "internal",
