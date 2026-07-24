@@ -4282,26 +4282,37 @@ export class Session {
     if (registry.isPendingActivation(workspace.cwd)) return;
     if (!backend.hasConfig(workspace.cwd)) return;
 
-    const cwd = workspace.cwd;
-    registry.registerPendingActivation(cwd);
-    this.sessionLogger.info(
-      { workspaceId: workspace.workspaceId, cwd },
-      "Starting dev container for workspace",
-    );
-
+    // Check availability before attempting to start. If Docker or the
+    // devcontainer CLI isn't available, skip silently — agents and terminals
+    // run on the host, and the UI doesn't show a container badge.
     void backend
-      .up({ workspaceFolder: cwd })
-      .then((handle) => {
-        registry.activateContainer(cwd, handle);
-        void this.emitWorkspaceUpdateForWorkspaceId(workspace.workspaceId);
+      .isAvailable()
+      .then((available) => {
+        if (!available) return;
+        const cwd = workspace.cwd;
+        registry.registerPendingActivation(cwd);
+        this.sessionLogger.info(
+          { workspaceId: workspace.workspaceId, cwd },
+          "Starting dev container for workspace",
+        );
+        void backend
+          .up({ workspaceFolder: cwd })
+          .then((handle) => {
+            registry.activateContainer(cwd, handle);
+            void this.emitWorkspaceUpdateForWorkspaceId(workspace.workspaceId);
+            return;
+          })
+          .catch((error) => {
+            registry.deactivateContainer(cwd);
+            this.sessionLogger.error(
+              { err: error, workspaceId: workspace.workspaceId, cwd },
+              "Failed to start dev container for workspace",
+            );
+          });
         return;
       })
-      .catch((error) => {
-        registry.deactivateContainer(cwd);
-        this.sessionLogger.error(
-          { err: error, workspaceId: workspace.workspaceId, cwd },
-          "Failed to start dev container for workspace",
-        );
+      .catch(() => {
+        // isAvailable() itself failed — treat as unavailable
       });
   }
 
