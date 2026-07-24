@@ -118,6 +118,8 @@ export interface EnsureRemoteDaemonOptions {
   onProgress?: (message: string) => void;
   /** Override the ssh exec implementation (for tests). */
   exec?: (command: string) => Promise<SshExecResult>;
+  /** Path to an SSH_ASKPASS program for interactive password prompts. */
+  askpassPath?: string;
   /** Per-command timeout in milliseconds (default 120s; install may be slow). */
   commandTimeoutMs?: number;
   /** How long to wait for a freshly launched daemon to accept connections. */
@@ -153,7 +155,8 @@ export async function ensureRemoteDaemon(
   const readyTimeoutMs = options.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS;
   const exec =
     options.exec ??
-    ((command: string) => sshExec(config, command, { timeoutMs: commandTimeoutMs }));
+    ((command: string) =>
+      sshExec(config, command, { timeoutMs: commandTimeoutMs, askpassPath: options.askpassPath }));
 
   const progress = (message: string) => onProgress?.(message);
 

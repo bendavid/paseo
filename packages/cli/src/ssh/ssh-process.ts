@@ -1,23 +1,30 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { createServer, createConnection, type Server, type Socket } from "node:net";
+import { writeFileSync, chmodSync, unlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import type { SshHostConfig } from "./ssh-host-config.js";
 
 /**
- * Base SSH arguments placed before the remote command / tunnel target. Uses
- * BatchMode so authentication fails fast instead of hanging on a password
- * prompt, and accept-new host key checking so first connect doesn't block.
+ * Base SSH arguments. When `askpassPath` is set, BatchMode is dropped so SSH
+ * can prompt for a password via the SSH_ASKPASS program. Without it, BatchMode
+ * ensures auth fails fast instead of hanging on a prompt the user can't see.
  */
-export function buildSshBaseArgs(config: SshHostConfig): string[] {
+export function buildSshBaseArgs(
+  config: SshHostConfig,
+  options?: { askpassPath?: string },
+): string[] {
   const args = [
     "-p",
     String(config.port),
-    "-o",
-    "BatchMode=yes",
     "-o",
     "StrictHostKeyChecking=accept-new",
     "-o",
     "ConnectTimeout=10",
   ];
+  if (!options?.askpassPath) {
+    args.push("-o", "BatchMode=yes");
+  }
   if (config.identityFile) {
     args.push("-o", `IdentityFile=${config.identityFile}`);
   }
@@ -28,6 +35,8 @@ export function buildSshBaseArgs(config: SshHostConfig): string[] {
 export interface SshExecOptions {
   /** Per-command timeout in milliseconds. */
   timeoutMs?: number;
+  /** Path to an SSH_ASKPASS program. When set, BatchMode is dropped. */
+  askpassPath?: string;
 }
 
 export interface SshExecResult {
@@ -50,11 +59,20 @@ export function sshExec(
   options?: SshExecOptions,
 ): Promise<SshExecResult> {
   return new Promise((resolve) => {
-    const args = [...buildSshBaseArgs(config), command];
-    const child = spawn("ssh", args, {
+    const sshArgs = [...buildSshBaseArgs(config, { askpassPath: options?.askpassPath }), command];
+    const spawnOpts: SpawnOptions = {
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
-    });
+    };
+    if (options?.askpassPath) {
+      spawnOpts.env = {
+        ...process.env,
+        SSH_ASKPASS: options.askpassPath,
+        SSH_ASKPASS_REQUIRE: "force",
+        DISPLAY: process.env.DISPLAY ?? ":0",
+      };
+    }
+    const child = spawn("ssh", sshArgs, spawnOpts);
 
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
@@ -158,27 +176,36 @@ export class SshTunnel {
   }
 
   /**
-   * Open a tunnel forwarding `127.0.0.1:<localPort>` to the remote
    * `127.0.0.1:<remotePort>`. Resolves once the local port accepts connections.
    */
   static async open(
     config: SshHostConfig,
     remotePort: number,
-    options?: { localPort?: number; readyTimeoutMs?: number },
+    options?: { localPort?: number; readyTimeoutMs?: number; askpassPath?: string },
   ): Promise<SshTunnel> {
     const localPort = options?.localPort ?? (await findFreeLocalPort());
+    const sshBaseArgs = buildSshBaseArgs(config, { askpassPath: options?.askpassPath });
     const args = [
       "-L",
       `${localPort}:127.0.0.1:${remotePort}`,
       "-N",
       "-o",
       "ExitOnForwardFailure=yes",
-      ...buildSshBaseArgs(config),
+      ...sshBaseArgs,
     ];
-    const child = spawn("ssh", args, {
+    const spawnOpts: SpawnOptions = {
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
-    });
+    };
+    if (options?.askpassPath) {
+      spawnOpts.env = {
+        ...process.env,
+        SSH_ASKPASS: options.askpassPath,
+        SSH_ASKPASS_REQUIRE: "force",
+        DISPLAY: process.env.DISPLAY ?? ":0",
+      };
+    }
+    const child = spawn("ssh", args, spawnOpts);
 
     const ready = waitForLocalPort(localPort, {
       timeoutMs: options?.readyTimeoutMs ?? 15_000,
@@ -223,5 +250,36 @@ export class SshTunnel {
       killTimer.unref();
       this.child.once("close", () => clearTimeout(killTimer));
     }
+  }
+}
+
+/**
+ * Create a temporary SSH_ASKPASS script that shows a native OS password
+ * dialog. SSH calls this program (with the prompt as argv[1]) when it needs
+ * a password and no tty is available. The password goes to stdout and is
+ * never stored. Returns the script path; call `cleanupAskpassScript` to
+ * remove it.
+ */
+export function createAskpassScript(): string {
+  const scriptPath = path.join(tmpdir(), `paseo-askpass-${process.pid}.sh`);
+  // macOS uses osascript; Linux tries zenity then kdialog.
+  const script = `#!/bin/sh
+if [ "$(uname)" = "Darwin" ]; then
+  osascript -e 'display dialog "$1" default answer "" with hidden answer' -e 'text returned of result' 2>/dev/null
+else
+  zenity --password --title="$1" 2>/dev/null || kdialog --password "$1" 2>/dev/null
+fi
+`;
+  writeFileSync(scriptPath, script, { mode: 0o700 });
+  chmodSync(scriptPath, 0o700);
+  return scriptPath;
+}
+
+/** Remove the temporary askpass script. */
+export function cleanupAskpassScript(scriptPath: string): void {
+  try {
+    unlinkSync(scriptPath);
+  } catch {
+    // Best-effort cleanup.
   }
 }

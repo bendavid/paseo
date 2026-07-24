@@ -97,11 +97,19 @@ import {
   type AgentDeepLinkTarget,
 } from "@getpaseo/protocol/agent-deep-link";
 import { AgentNavigationInbox, parseAgentDeepLinkFromArgv } from "./agent-navigation.js";
-import { SshTunnel, ensureRemoteDaemon, normalizeSshHostConfig } from "@getpaseo/cli/ssh";
+import {
+  SshTunnel,
+  ensureRemoteDaemon,
+  normalizeSshHostConfig,
+  createAskpassScript,
+  cleanupAskpassScript,
+} from "@getpaseo/cli/ssh";
 
 const DEV_SERVER_URL = process.env.EXPO_DEV_URL ?? "http://localhost:8081";
 const APP_SCHEME = "paseo";
 const PASEO_DEBUG = process.env.PASEO_DEBUG === "1";
+const sshAskpassScript = createAskpassScript();
+app.on("will-quit", () => cleanupAskpassScript(sshAskpassScript));
 const DISABLE_SINGLE_INSTANCE_LOCK = process.env.PASEO_DISABLE_SINGLE_INSTANCE_LOCK === "1";
 const APP_NAME = process.env.PASEO_TEST_APP_NAME?.trim() || "Paseo";
 const UPDATE_QUIT_DEADLINE_MS = 5_000;
@@ -611,10 +619,11 @@ function parseSshConfig(config: Record<string, unknown>) {
     installDir: typeof config.installDir === "string" ? config.installDir : undefined,
   });
 }
-
 ipcMain.handle("paseo:ssh:open-tunnel", async (_event, config: Record<string, unknown>) => {
   const sshConfig = parseSshConfig(config);
-  const tunnel = await SshTunnel.open(sshConfig, sshConfig.remotePort);
+  const tunnel = await SshTunnel.open(sshConfig, sshConfig.remotePort, {
+    askpassPath: sshAskpassScript,
+  });
   const tunnelId = randomUUID();
   sshTunnels.set(tunnelId, tunnel);
   return { tunnelId, localPort: tunnel.localPort };
@@ -631,7 +640,10 @@ ipcMain.handle("paseo:ssh:close-tunnel", async (_event, tunnelId: string) => {
 ipcMain.handle(
   "paseo:ssh:ensure-remote-daemon",
   async (_event, config: Record<string, unknown>) => {
-    return ensureRemoteDaemon({ config: parseSshConfig(config) });
+    return ensureRemoteDaemon({
+      config: parseSshConfig(config),
+      askpassPath: sshAskpassScript,
+    });
   },
 );
 
