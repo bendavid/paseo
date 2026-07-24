@@ -4243,7 +4243,7 @@ export class Session {
     workspace: PersistedWorkspaceRecord,
     projectRecord?: PersistedProjectRecord | null,
   ): Promise<WorkspaceDescriptorPayload> {
-    this.maybeStartContainerForWorkspace(workspace);
+    await this.maybeStartContainerForWorkspace(workspace);
     const resolvedProjectRecord =
       projectRecord ?? (await this.projectRegistry.get(workspace.projectId));
 
@@ -4308,17 +4308,17 @@ export class Session {
    * reused. Fire-and-forget: the descriptor returns immediately and a
    * workspace update is emitted once the container is up.
    */
-  private maybeStartContainerForWorkspace(workspace: PersistedWorkspaceRecord): void {
+  private maybeStartContainerForWorkspace(workspace: PersistedWorkspaceRecord): Promise<void> {
     const backend = this.containerBackend;
     const registry = this.launchStrategyRegistry;
-    if (!backend || !registry) return;
-    if (registry.hasContainerStrategy(workspace.cwd)) return;
-    if (registry.isPendingActivation(workspace.cwd)) return;
+    if (!backend || !registry) return Promise.resolve();
+    if (registry.hasContainerStrategy(workspace.cwd)) return Promise.resolve();
+    if (registry.isPendingActivation(workspace.cwd)) return Promise.resolve();
 
     const config = discoverDevContainerConfig(workspace.cwd);
-    if (!config) return;
+    if (!config) return Promise.resolve();
 
-    if (workspace.containerApproval === "denied") return;
+    if (workspace.containerApproval === "denied") return Promise.resolve();
 
     const cwd = workspace.cwd;
     const workspaceId = workspace.workspaceId;
@@ -4326,7 +4326,7 @@ export class Session {
     // Check availability before attempting to start. If Docker or the
     // devcontainer CLI isn't available, skip silently — agents and terminals
     // run on the host, and the UI doesn't show a container badge.
-    void (async () => {
+    return (async () => {
       let available: boolean;
       try {
         available = await backend.isAvailable();
