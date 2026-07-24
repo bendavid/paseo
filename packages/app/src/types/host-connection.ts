@@ -309,13 +309,13 @@ function parseSshConnectionRecord(record: Record<string, unknown>): SshHostConne
   try {
     const host = typeof record.host === "string" ? record.host.trim() : "";
     const user = typeof record.user === "string" ? record.user.trim() : "";
-    if (!host || !user) return null;
+    if (!host) return null;
     return SshHostConnectionSchema.parse({
-      id: `ssh:${user}@${host}`,
+      id: user ? `ssh:${user}@${host}` : `ssh:${host}`,
       type: "ssh",
       host,
       port: record.port,
-      user,
+      ...(user ? { user } : {}),
       ...(typeof record.identityFile === "string" ? { identityFile: record.identityFile } : {}),
       remotePort: record.remotePort,
       remoteHome: record.remoteHome,

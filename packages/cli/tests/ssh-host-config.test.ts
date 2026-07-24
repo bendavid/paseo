@@ -76,9 +76,9 @@ describe("ssh-host-config: normalizeSshHostConfig", () => {
     expect(() => normalizeSshHostConfig({ id: "1".repeat(64), host: "h", user: "u" })).toThrow();
   });
 
-  it("rejects empty host and user", () => {
-    expect(() => normalizeSshHostConfig({ id: "x", host: "  ", user: "u" })).toThrow();
-    expect(() => normalizeSshHostConfig({ id: "x", host: "h", user: "  " })).toThrow();
+  it("rejects empty host but accepts empty user", () => {
+    expect(() => normalizeSshHostConfig({ id: "x", host: "  " })).toThrow();
+    expect(() => normalizeSshHostConfig({ id: "x", host: "h" })).not.toThrow();
   });
 
   it("rejects out-of-range ports", () => {
@@ -170,7 +170,7 @@ describe("ssh-host-config: parseSshHostUri", () => {
 
   it("returns null for malformed ssh URIs", () => {
     expect(parseSshHostUri("ssh://")).toBeNull();
-    expect(parseSshHostUri("ssh://@host")).toBeNull();
+    expect(parseSshHostUri("ssh://@host")?.kind).toBe("inline");
   });
 });
 
@@ -260,7 +260,7 @@ describe("ssh-host-config: persistence", () => {
     const raw = {
       hosts: [
         { id: "good", host: "h", user: "u" },
-        { id: "bad", host: "h" },
+        { id: "bad", host: "" },
         "garbage",
         { id: 123, host: "h", user: "u" },
       ],

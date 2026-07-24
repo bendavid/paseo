@@ -17,8 +17,8 @@ export interface SshHostConfig {
   host: string;
   /** SSH port (default 22). */
   port: number;
-  /** SSH user. */
-  user: string;
+  /** SSH user (optional — falls back to ssh config or current user). */
+  user?: string;
   /** Optional path to a private key file. */
   identityFile?: string;
   /** Remote daemon port to forward to (default 6767). */
@@ -64,8 +64,12 @@ function validatePort(value: number, label: string): number {
  * Validate and apply defaults to a raw SSH host config record. Throws on invalid
  * input so callers surface a clear error rather than silently persisting junk.
  */
+function sshHostLabel(user: string | undefined, host: string): string {
+  return user ? `${user}@${host}` : host;
+}
+
 export function normalizeSshHostConfig(
-  input: Partial<SshHostConfig> & { id: string; host: string; user: string },
+  input: Partial<SshHostConfig> & { id: string; host: string },
 ): SshHostConfig {
   if (!isValidSshHostId(input.id)) {
     throw new Error(
@@ -74,13 +78,11 @@ export function normalizeSshHostConfig(
   }
   const host = input.host.trim();
   if (!host) throw new Error("SSH host is required");
-  const user = input.user.trim();
-  if (!user) throw new Error("SSH user is required");
+  const user = input.user?.trim() || undefined;
 
   const port = validatePort(input.port ?? DEFAULT_SSH_PORT, "SSH port");
   const remotePort = validatePort(input.remotePort ?? DEFAULT_REMOTE_PORT, "remote daemon port");
-
-  const label = (input.label ?? "").trim() || `${user}@${host}`;
+  const label = (input.label ?? "").trim() || sshHostLabel(user, host);
   const remoteHome = (input.remoteHome ?? "").trim() || DEFAULT_REMOTE_HOME;
   const installDir = (input.installDir ?? "").trim() || DEFAULT_INSTALL_DIR;
   const identityFile = input.identityFile?.trim() || undefined;
@@ -91,7 +93,7 @@ export function normalizeSshHostConfig(
     label,
     host,
     port,
-    user,
+    ...(user ? { user } : {}),
     ...(identityFile ? { identityFile } : {}),
     remotePort,
     remoteHome,
@@ -173,23 +175,25 @@ export function parseSshHostUri(uri: string): ParsedSshHostUri | null {
     return { kind: "named", id, overrides };
   }
 
-  // `ssh://user@host[:port]` is an inline host.
+  // `ssh://user@host[:port]` is an inline host. The `@` is required to
+  // distinguish from a named reference (`ssh://<id>`).
   const atIndex = authority.lastIndexOf("@");
-  const user = authority.slice(0, atIndex);
+  const user = authority.slice(0, atIndex) || undefined;
   const hostPort = authority.slice(atIndex + 1);
-  if (!user || !hostPort) return null;
+  if (!hostPort) return null;
 
   const split = splitHostPort(hostPort);
   if (!split) return null;
   const { host, port } = split;
 
   const config = normalizeSshHostConfig({
-    id: `${user}@${host}`.replace(/[^a-z0-9-]/gi, "-").toLowerCase(),
+    id: (user ? `${user}@${host}` : host).replace(/[^a-z0-9-]/gi, "-").toLowerCase(),
     host,
-    user,
+    ...(user ? { user } : {}),
     ...(port ? { port } : {}),
     ...overrides,
   });
+
   return { kind: "inline", config };
 }
 
@@ -224,13 +228,13 @@ function registryPath(paseoHome?: string): string {
 
 function isHostRecord(
   value: unknown,
-): value is { id: string; host: string; user: string; [key: string]: unknown } {
+): value is { id: string; host: string; user?: string; [key: string]: unknown } {
   if (!value || typeof value !== "object") return false;
   const record = value as Record<string, unknown>;
   return (
     typeof record.id === "string" &&
     typeof record.host === "string" &&
-    typeof record.user === "string"
+    (record.user === undefined || typeof record.user === "string")
   );
 }
 

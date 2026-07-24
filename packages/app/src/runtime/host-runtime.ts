@@ -207,8 +207,8 @@ function toActiveConnection(connection: HostConnection): ActiveConnection {
   if (connection.type === "ssh") {
     return {
       type: "ssh",
-      endpoint: `${connection.user}@${connection.host}:${connection.port}`,
-      display: `${connection.user}@${connection.host}`,
+      endpoint: `${connection.user ?? ""}@${connection.host}:${connection.port}`,
+      display: connection.user ? `${connection.user}@${connection.host}` : connection.host,
     };
   }
   return {
@@ -1735,7 +1735,7 @@ export class HostRuntimeStore {
   async probeAndUpsertSshConnection(input: {
     host: string;
     port?: number;
-    user: string;
+    user?: string;
     identityFile?: string;
     remotePort?: number;
     remoteHome?: string;
@@ -1743,9 +1743,9 @@ export class HostRuntimeStore {
     label?: string;
   }): Promise<{ profile: HostProfile; serverId: string; hostname: string | null }> {
     const connection = normalizeSshConnection({
-      id: `ssh:${input.user}@${input.host}`,
+      id: input.user ? `ssh:${input.user}@${input.host}` : `ssh:${input.host}`,
       host: input.host,
-      user: input.user,
+      ...(input.user ? { user: input.user } : {}),
       port: input.port,
       ...(input.identityFile ? { identityFile: input.identityFile } : {}),
       remotePort: input.remotePort,
@@ -1753,7 +1753,7 @@ export class HostRuntimeStore {
       installDir: input.installDir,
     });
     return this.probeAndUpsertConnection({
-      label: input.label ?? `${input.user}@${input.host}`,
+      label: input.label ?? (input.user ? `${input.user}@${input.host}` : input.host),
       connection,
     });
   }
@@ -2446,7 +2446,7 @@ export interface HostMutations {
   probeAndUpsertSshConnection: (input: {
     host: string;
     port?: number;
-    user: string;
+    user?: string;
     identityFile?: string;
     remotePort?: number;
     remoteHome?: string;

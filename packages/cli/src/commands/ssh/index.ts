@@ -26,7 +26,7 @@ interface SshHostRow {
   label: string;
   host: string;
   port: number;
-  user: string;
+  user?: string;
   remotePort: number;
   remoteHome: string;
   installDir: string;
@@ -83,7 +83,7 @@ export function createSshCommand(): Command {
     .command("add <name>")
     .description("Add or update a remote SSH host")
     .requiredOption("--host <host>", "Remote hostname or IP")
-    .requiredOption("--user <user>", "SSH user")
+    .option("--user <user>", "SSH user (optional — falls back to ssh config)")
     .option("--port <port>", "SSH port (default: 22)")
     .option("--identity <path>", "Path to a private key file")
     .option("--remote-port <port>", "Remote daemon port (default: 6767)")
@@ -96,7 +96,7 @@ export function createSshCommand(): Command {
         const name = args[0] as string;
         const options = args.at(-2) as CommandOptions & {
           host: string;
-          user: string;
+          user?: string;
           port?: string;
           identity?: string;
           remotePort?: string;
@@ -119,8 +119,7 @@ export function createSshCommand(): Command {
           ...(options.port ? { port: Number(options.port) } : {}),
           ...(options.identity ? { identityFile: options.identity } : {}),
           ...(options.remotePort ? { remotePort: Number(options.remotePort) } : {}),
-          ...(options.remoteHome ? { remoteHome: options.remoteHome } : {}),
-          ...(options.installDir ? { installDir: options.installDir } : {}),
+          ...(options.user ? { user: options.user } : {}),
           ...(options.label ? { label: options.label } : {}),
           ...(options.version ? { packageVersion: options.version } : {}),
         });

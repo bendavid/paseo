@@ -109,7 +109,7 @@ function formatHostConnectionLabel(connection: HostConnection, t: TFunction): st
     return `${t("settings.host.badges.local")} (${connection.path})`;
   }
   if (connection.type === "ssh") {
-    return `SSH (${connection.user}@${connection.host})`;
+    return `SSH (${connection.user ? `${connection.user}@${connection.host}` : connection.host})`;
   }
   return `TCP (${connection.endpoint})`;
 }

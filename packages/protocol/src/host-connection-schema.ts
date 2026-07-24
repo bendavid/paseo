@@ -16,7 +16,7 @@ export const SshHostConnectionSchema = z.object({
   type: z.literal("ssh"),
   host: z.string(),
   port: z.number().int().min(1).max(65535).optional().default(22),
-  user: z.string(),
+  user: z.string().optional(),
   identityFile: z.string().optional(),
   remotePort: z.number().int().min(1).max(65535).optional().default(6767),
   remoteHome: z.string().optional().default("~/.paseo"),
@@ -33,7 +33,7 @@ export type NormalizedSshHostConnection = z.output<typeof SshHostConnectionSchem
  * one place — the protocol schema.
  */
 export function normalizeSshConnection(
-  input: Partial<SshHostConnection> & { id: string; host: string; user: string },
+  input: Partial<SshHostConnection> & { id: string; host: string },
 ): NormalizedSshHostConnection {
   return SshHostConnectionSchema.parse({
     type: "ssh",

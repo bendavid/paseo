@@ -99,8 +99,8 @@ export function AddSshHostModal({ visible, onClose, onCancel, onSaved }: AddSshH
     if (isSaving) return;
     const trimmedHost = host.trim();
     const trimmedUser = user.trim();
-    if (!trimmedHost || !trimmedUser) {
-      setErrorMessage("Host and user are required.");
+    if (!trimmedHost) {
+      setErrorMessage("Host is required.");
       return;
     }
 
@@ -110,7 +110,7 @@ export function AddSshHostModal({ visible, onClose, onCancel, onSaved }: AddSshH
       const { serverId, hostname } = await probeAndUpsertSshConnection({
         host: trimmedHost,
         port: port.trim() ? Number(port) : undefined,
-        user: trimmedUser,
+        ...(trimmedUser ? { user: trimmedUser } : {}),
         ...(identityFile.trim() ? { identityFile: identityFile.trim() } : {}),
       });
       onSaved?.({ serverId, hostname });
@@ -182,7 +182,7 @@ export function AddSshHostModal({ visible, onClose, onCancel, onSaved }: AddSshH
       </View>
 
       <View style={styles.field}>
-        <Text style={styles.label}>User</Text>
+        <Text style={styles.label}>User (optional)</Text>
         <AdaptiveTextInput
           testID="ssh-user-input"
           accessibilityLabel="User"

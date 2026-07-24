@@ -41,7 +41,7 @@ export function buildSshBaseArgs(
   if (config.identityFile) {
     args.push("-o", `IdentityFile=${config.identityFile}`);
   }
-  args.push(`${config.user}@${config.host}`);
+  args.push(config.user ? `${config.user}@${config.host}` : config.host);
   return args;
 }
 
