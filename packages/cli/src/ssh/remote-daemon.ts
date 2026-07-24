@@ -121,7 +121,7 @@ export function buildEnsureScript(config: SshHostConfig, version: string): strin
     `  sleep ${pollIntervalMs / 1000}`,
     `  i=$((i + 1))`,
     `done`,
-    `echo "PROGRESS:The Paseo daemon was launched on ${config.host} but did not become ready on port ${port}. Check ${config.remoteHome}/daemon-remote.out on the remote host." >&2`,
+    `echo "PROGRESS:The Paseo daemon was launched on ${config.host} but did not become ready on port ${port}. Check ${config.remoteHome}/daemon.log on the remote host." >&2`,
     `exit 12`,
   ].join("\n");
 }
@@ -212,7 +212,7 @@ export async function ensureRemoteDaemon(
     throw new Error(
       `The Paseo daemon was launched on ${config.host} but did not become ready ` +
         `on port ${config.remotePort} within 30s. ` +
-        `Check ${config.remoteHome}/daemon-remote.out on the remote host.`,
+        `Check ${config.remoteHome}/daemon.log on the remote host.`,
     );
   }
 

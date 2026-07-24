@@ -7,10 +7,11 @@ log.initialize({ spyRendererConsole: true });
 import { inheritLoginShellEnv } from "./login-shell-env.js";
 
 import path from "node:path";
+import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 import { existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   app,
   autoUpdater as electronAutoUpdater,
@@ -606,6 +607,12 @@ ipcMain.handle("paseo:browser:copy-element", (_event, payload: unknown): boolean
   return false;
 });
 
+function sshControlPath(config: { host: string; port: number; user?: string }): string {
+  const key = `${config.user ?? ""}@${config.host}:${config.port}`;
+  const hash = createHash("sha256").update(key).digest("hex").slice(0, 12);
+  return path.join(tmpdir(), `paseo-ssh-${hash}.sock`);
+}
+
 function parseSshConfig(config: Record<string, unknown>) {
   return normalizeSshHostConfig({
     id: "desktop",
@@ -623,6 +630,7 @@ ipcMain.handle("paseo:ssh:open-tunnel", async (_event, config: Record<string, un
   const sshConfig = parseSshConfig(config);
   const tunnel = await SshTunnel.open(sshConfig, sshConfig.remotePort, {
     askpassPath: sshAskpassScript,
+    controlPath: sshControlPath(sshConfig),
   });
   const tunnelId = randomUUID();
   sshTunnels.set(tunnelId, tunnel);
@@ -636,7 +644,6 @@ ipcMain.handle("paseo:ssh:close-tunnel", async (_event, tunnelId: string) => {
     sshTunnels.delete(tunnelId);
   }
 });
-
 ipcMain.handle(
   "paseo:ssh:ensure-remote-daemon",
   async (_event, config: Record<string, unknown>) => {
@@ -644,6 +651,7 @@ ipcMain.handle(
     return ensureRemoteDaemon({
       config: sshConfig,
       askpassPath: sshAskpassScript,
+      controlPath: sshControlPath(sshConfig),
     });
   },
 );
