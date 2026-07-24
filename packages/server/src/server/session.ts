@@ -4287,7 +4287,11 @@ export class Session {
   private async resolveContainerInfo(
     cwd: string,
   ): Promise<WorkspaceDescriptorPayload["containerInfo"]> {
-    if (!this.containerBackend || !this.launchStrategyRegistry?.hasContainerStrategy(cwd)) {
+    if (!this.containerBackend) return undefined;
+    // Only query container info when the strategy is active or pending —
+    // avoids a docker inspect call for every workspace descriptor build.
+    const registry = this.launchStrategyRegistry;
+    if (!registry?.hasContainerStrategy(cwd) && !registry?.isPendingActivation(cwd)) {
       return undefined;
     }
     return this.containerBackend.getContainerInfo(cwd);

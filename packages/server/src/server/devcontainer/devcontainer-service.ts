@@ -213,26 +213,44 @@ export function createDevContainerBackend(
 
   async function getContainerInfo(workspaceFolder: string): Promise<ContainerInfo | null> {
     const resolved = resolve(workspaceFolder);
+    // Find the container by the devcontainer label, not the in-memory handle.
+    // This works on daemon restart when handles is empty but the container is
+    // still running from a previous session.
+    let containerId: string;
     const handle = handles.get(resolved);
-    if (!handle) return null;
+    if (handle) {
+      containerId = handle.identifier;
+    } else {
+      try {
+        const result = await execCommand(
+          dockerBin,
+          ["ps", "-q", "--filter", `label=devcontainer.local_folder=${resolved}`],
+          { envMode: "internal", timeout: 10_000 },
+        );
+        containerId = result.stdout.trim();
+        if (!containerId) return null;
+      } catch {
+        return null;
+      }
+    }
     try {
       const result = await execCommand(
         dockerBin,
-        ["inspect", "--format", "{{json .}}", handle.identifier],
+        ["inspect", "--format", "{{json .}}", containerId],
         { envMode: "internal", timeout: 10_000 },
       );
       const data = JSON.parse(result.stdout.trim()) as {
         Name?: string;
-        Config?: { Image?: string };
+        Config?: { Image?: string; User?: string };
         State?: { StartedAt?: string };
       };
       return {
         backend: "devcontainer",
-        containerId: handle.identifier.slice(0, 12),
-        containerName: data.Name?.replace(/^\//, "") ?? handle.identifier.slice(0, 12),
+        containerId: containerId.slice(0, 12),
+        containerName: data.Name?.replace(/^\//, "") ?? containerId.slice(0, 12),
         image: data.Config?.Image ?? "unknown",
         startedAt: data.State?.StartedAt ?? new Date().toISOString(),
-        remoteUser: handle.remoteUser,
+        remoteUser: data.Config?.User || handle?.remoteUser || "root",
       };
     } catch {
       return null;
