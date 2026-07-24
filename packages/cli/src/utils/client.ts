@@ -61,7 +61,7 @@ export function buildDaemonConnectionCommandError(options: {
     code: "DAEMON_NOT_RUNNING",
     message: `Cannot connect to daemon at ${host}: ${message}`,
     details:
-      "Start the daemon with: paseo daemon start, or connect to a remote host with --host ssh://<name> (see: paseo ssh add).",
+      "Start the daemon with: paseo daemon start, or connect to a remote host with --host ssh://user@host:port.",
   };
 }
 

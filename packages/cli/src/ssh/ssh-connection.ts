@@ -3,7 +3,6 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { DaemonClient, type WebSocketLike } from "@getpaseo/client/internal/daemon-client";
 import {
-  loadSshHostRegistry,
   resolveSshHostConfig,
   type SshHostConfig,
 } from "./ssh-host-config.js";
@@ -25,8 +24,6 @@ export interface ConnectViaSshOptions {
   onProgress?: (message: string) => void;
   /** Override the WebSocket factory (for tests). */
   webSocketFactory?: (url: string, options?: { headers?: Record<string, string> }) => WebSocketLike;
-  /** Override PASEO_HOME for the SSH host registry (for tests). */
-  paseoHome?: string;
 }
 
 /**
@@ -41,8 +38,7 @@ export async function connectViaSsh(
   host: string,
   options: ConnectViaSshOptions,
 ): Promise<DaemonClient> {
-  const registry = loadSshHostRegistry(options.paseoHome);
-  const config = resolveSshHostConfig(host, registry.hosts);
+  const config = resolveSshHostConfig(host);
   if (!config) {
     throw new Error(`Not an SSH host URI: ${host}`);
   }

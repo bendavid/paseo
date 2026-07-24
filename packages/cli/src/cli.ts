@@ -12,7 +12,6 @@ import { createWorktreeCommand } from "./commands/worktree/index.js";
 import { createWorkspaceCommand } from "./commands/workspace/index.js";
 import { createHeartbeatCommand } from "./commands/heartbeat/index.js";
 import { createHubCommand } from "./commands/hub/index.js";
-import { createSshCommand } from "./commands/ssh/index.js";
 import { createHooksCommand } from "./commands/hooks.js";
 import { startCommand as daemonStartCommand } from "./commands/daemon/start.js";
 import { runStatusCommand as runDaemonStatusCommand } from "./commands/daemon/status.js";
@@ -116,7 +115,6 @@ export function createCli(): Command {
   // Top-level local daemon shortcuts
   program.addCommand(onboardCommand());
   program.addCommand(daemonStartCommand());
-  program.addCommand(createSshCommand());
   program.addCommand(createHooksCommand());
 
   addJsonOption(

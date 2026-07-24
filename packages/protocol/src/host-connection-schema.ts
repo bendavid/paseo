@@ -17,7 +17,6 @@ export const SshHostConnectionSchema = z.object({
   host: z.string(),
   port: z.number().int().min(1).max(65535).optional().default(22),
   user: z.string().optional(),
-  identityFile: z.string().optional(),
   remotePort: z.number().int().min(1).max(65535).optional().default(6767),
   remoteHome: z.string().optional().default("~/.paseo"),
   installDir: z.string().optional().default("~/.paseo/cli"),

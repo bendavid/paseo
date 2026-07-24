@@ -1,10 +1,7 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import path from "node:path";
-import { resolvePaseoHome } from "@getpaseo/server";
 import { SshHostConnectionSchema } from "@getpaseo/protocol/host-connection-schema";
 
 /**
- * A saved remote SSH host. The CLI tunnels daemon WebSocket traffic through an
+ * A remote SSH host. The CLI tunnels daemon WebSocket traffic through an
  * SSH local port-forward to {@link remotePort} on the remote host, after making
  * sure a Paseo daemon is running there (installing Paseo first if needed).
  */
@@ -19,8 +16,6 @@ export interface SshHostConfig {
   port: number;
   /** SSH user (optional — falls back to ssh config or current user). */
   user?: string;
-  /** Optional path to a private key file. */
-  identityFile?: string;
   /** Remote daemon port to forward to (default 6767). */
   remotePort: number;
   /** Remote PASEO_HOME (default ~/.paseo). */
@@ -30,6 +25,7 @@ export interface SshHostConfig {
   /** Optional @getpaseo/cli version to install (default: the local CLI version). */
   packageVersion?: string;
 }
+
 const SSH_DEFAULTS = SshHostConnectionSchema.parse({
   id: "defaults",
   type: "ssh",
@@ -42,12 +38,7 @@ export const DEFAULT_REMOTE_PORT = SSH_DEFAULTS.remotePort;
 export const DEFAULT_REMOTE_HOME = SSH_DEFAULTS.remoteHome;
 export const DEFAULT_INSTALL_DIR = SSH_DEFAULTS.installDir;
 
-const SSH_HOSTS_FILENAME = "ssh-hosts.json";
 const ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,62}$/;
-
-export interface SshHostRegistry {
-  hosts: SshHostConfig[];
-}
 
 export function isValidSshHostId(id: string): boolean {
   return ID_PATTERN.test(id);
@@ -60,14 +51,14 @@ function validatePort(value: number, label: string): number {
   return value;
 }
 
-/**
- * Validate and apply defaults to a raw SSH host config record. Throws on invalid
- * input so callers surface a clear error rather than silently persisting junk.
- */
 function sshHostLabel(user: string | undefined, host: string): string {
   return user ? `${user}@${host}` : host;
 }
 
+/**
+ * Validate and apply defaults to a raw SSH host config record. Throws on invalid
+ * input so callers surface a clear error rather than silently persisting junk.
+ */
 export function normalizeSshHostConfig(
   input: Partial<SshHostConfig> & { id: string; host: string },
 ): SshHostConfig {
@@ -85,7 +76,6 @@ export function normalizeSshHostConfig(
   const label = (input.label ?? "").trim() || sshHostLabel(user, host);
   const remoteHome = (input.remoteHome ?? "").trim() || DEFAULT_REMOTE_HOME;
   const installDir = (input.installDir ?? "").trim() || DEFAULT_INSTALL_DIR;
-  const identityFile = input.identityFile?.trim() || undefined;
   const packageVersion = input.packageVersion?.trim() || undefined;
 
   return {
@@ -94,7 +84,6 @@ export function normalizeSshHostConfig(
     host,
     port,
     ...(user ? { user } : {}),
-    ...(identityFile ? { identityFile } : {}),
     remotePort,
     remoteHome,
     installDir,
@@ -102,25 +91,21 @@ export function normalizeSshHostConfig(
   };
 }
 
-/** A parsed `ssh://` URI — either a named registry reference or an inline host. */
-export type ParsedSshHostUri =
-  | { kind: "named"; id: string; overrides: Partial<SshHostConfig> }
-  | { kind: "inline"; config: SshHostConfig };
+/** A parsed `ssh://` URI — always an inline host. */
+export interface ParsedSshHostUri {
+  kind: "inline";
+  config: SshHostConfig;
+}
 
 /**
  * Parse an `ssh://` URI into a structured form. Returns null for non-ssh URIs.
  *
- * Forms:
- *  - `ssh://<id>` — reference a saved host by id (with optional `?` overrides)
- *  - `ssh://user@host[:port]` — inline ad-hoc host (with optional query params)
+ * Form: `ssh://[user@]host[:port]` — inline ad-hoc host with optional query params.
  *
- * Query params (both forms): identity, remotePort, remoteHome, installDir,
- * label, version.
+ * Query params: remotePort, remoteHome, installDir, label, version.
  */
 function parseSshUriOverrides(params: URLSearchParams): Partial<SshHostConfig> {
   const overrides: Partial<SshHostConfig> = {};
-  const identity = params.get("identity");
-  if (identity) overrides.identityFile = identity;
   const remotePortParam = params.get("remotePort");
   if (remotePortParam) overrides.remotePort = Number(remotePortParam);
   const remoteHome = params.get("remoteHome");
@@ -168,15 +153,6 @@ export function parseSshHostUri(uri: string): ParsedSshHostUri | null {
 
   const overrides = parseSshUriOverrides(params);
 
-  // `ssh://<id>` with no `@`, no `.`, and no `:` is a named reference.
-  // `ssh://host` or `ssh://host:port` (contains `.` or `:`) is an inline host
-  // with no user — ssh falls back to its own config.
-  if (!authority.includes("@") && !authority.includes(".") && !authority.includes(":")) {
-    const id = authority.trim();
-    if (!id) return null;
-    return { kind: "named", id, overrides };
-  }
-
   // `ssh://[user@]host[:port]` is an inline host.
   const atIndex = authority.lastIndexOf("@");
   const user = atIndex >= 0 ? authority.slice(0, atIndex) || undefined : undefined;
@@ -203,122 +179,10 @@ export function isSshHostUri(uri: string): boolean {
 }
 
 /**
- * Resolve an `ssh://` URI to a concrete config, looking up named hosts in the
- * registry and applying any query overrides. Returns null for non-ssh URIs.
- * Throws if a named id is not found.
+ * Resolve an `ssh://` URI to a concrete config. Returns null for non-ssh URIs.
  */
-export function resolveSshHostConfig(uri: string, registry: SshHostConfig[]): SshHostConfig | null {
+export function resolveSshHostConfig(uri: string): SshHostConfig | null {
   const parsed = parseSshHostUri(uri);
   if (!parsed) return null;
-  if (parsed.kind === "inline") return parsed.config;
-
-  const existing = registry.find((h) => h.id === parsed.id);
-  if (!existing) {
-    throw new Error(`Unknown SSH host "${parsed.id}". Add it with: paseo ssh add ${parsed.id}`);
-  }
-  if (Object.keys(parsed.overrides).length === 0) return existing;
-  return normalizeSshHostConfig({ ...existing, ...parsed.overrides });
-}
-
-// --- Persistence -----------------------------------------------------------
-
-function registryPath(paseoHome?: string): string {
-  const home = paseoHome ?? resolvePaseoHome(process.env);
-  return path.join(home, SSH_HOSTS_FILENAME);
-}
-
-function isHostRecord(
-  value: unknown,
-): value is { id: string; host: string; user?: string; [key: string]: unknown } {
-  if (!value || typeof value !== "object") return false;
-  const record = value as Record<string, unknown>;
-  return (
-    typeof record.id === "string" &&
-    typeof record.host === "string" &&
-    (record.user === undefined || typeof record.user === "string")
-  );
-}
-
-function parseRegistry(raw: string): SshHostRegistry {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return { hosts: [] };
-  }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    return { hosts: [] };
-  }
-  const root = parsed as Record<string, unknown>;
-  if (!Array.isArray(root.hosts)) return { hosts: [] };
-  const hosts: SshHostConfig[] = [];
-  for (const entry of root.hosts) {
-    if (!isHostRecord(entry)) continue;
-    try {
-      hosts.push(
-        normalizeSshHostConfig({
-          id: entry.id,
-          host: entry.host,
-          user: entry.user,
-          port: typeof entry.port === "number" ? entry.port : undefined,
-          label: typeof entry.label === "string" ? entry.label : undefined,
-          identityFile: typeof entry.identityFile === "string" ? entry.identityFile : undefined,
-          remotePort: typeof entry.remotePort === "number" ? entry.remotePort : undefined,
-          remoteHome: typeof entry.remoteHome === "string" ? entry.remoteHome : undefined,
-          installDir: typeof entry.installDir === "string" ? entry.installDir : undefined,
-          packageVersion:
-            typeof entry.packageVersion === "string" ? entry.packageVersion : undefined,
-        }),
-      );
-    } catch {
-      // Skip malformed entries rather than failing the whole registry.
-    }
-  }
-  return { hosts };
-}
-
-export function loadSshHostRegistry(paseoHome?: string): SshHostRegistry {
-  const file = registryPath(paseoHome);
-  if (!existsSync(file)) return { hosts: [] };
-  try {
-    return parseRegistry(readFileSync(file, "utf8"));
-  } catch {
-    return { hosts: [] };
-  }
-}
-
-function writeRegistryAtomic(file: string, registry: SshHostRegistry): void {
-  mkdirSync(path.dirname(file), { recursive: true });
-  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
-  writeFileSync(tmp, JSON.stringify(registry, null, 2), "utf8");
-  renameSync(tmp, file);
-}
-
-export function saveSshHostRegistry(registry: SshHostRegistry, paseoHome?: string): void {
-  writeRegistryAtomic(registryPath(paseoHome), registry);
-}
-
-export function upsertSshHost(config: SshHostConfig, paseoHome?: string): SshHostRegistry {
-  const registry = loadSshHostRegistry(paseoHome);
-  const index = registry.hosts.findIndex((h) => h.id === config.id);
-  if (index >= 0) {
-    registry.hosts[index] = config;
-  } else {
-    registry.hosts.push(config);
-  }
-  saveSshHostRegistry(registry, paseoHome);
-  return registry;
-}
-
-export function removeSshHost(id: string, paseoHome?: string): boolean {
-  const registry = loadSshHostRegistry(paseoHome);
-  const before = registry.hosts.length;
-  registry.hosts = registry.hosts.filter((h) => h.id !== id);
-  if (registry.hosts.length === before) return false;
-  saveSshHostRegistry(registry, paseoHome);
-  return true;
-}
-
-export function findSshHost(id: string, paseoHome?: string): SshHostConfig | null {
-  return loadSshHostRegistry(paseoHome).hosts.find((h) => h.id === id) ?? null;
+  return parsed.config;
 }

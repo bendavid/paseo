@@ -620,7 +620,6 @@ function parseSshConfig(config: Record<string, unknown>) {
     host: String(config.host ?? ""),
     user: String(config.user ?? ""),
     port: typeof config.port === "number" ? config.port : undefined,
-    ...(typeof config.identityFile === "string" ? { identityFile: config.identityFile } : {}),
     remotePort: typeof config.remotePort === "number" ? config.remotePort : undefined,
     remoteHome: typeof config.remoteHome === "string" ? config.remoteHome : undefined,
     installDir: typeof config.installDir === "string" ? config.installDir : undefined,

@@ -1736,7 +1736,6 @@ export class HostRuntimeStore {
     host: string;
     port?: number;
     user?: string;
-    identityFile?: string;
     remotePort?: number;
     remoteHome?: string;
     installDir?: string;
@@ -1747,7 +1746,6 @@ export class HostRuntimeStore {
       host: input.host,
       ...(input.user ? { user: input.user } : {}),
       port: input.port,
-      ...(input.identityFile ? { identityFile: input.identityFile } : {}),
       remotePort: input.remotePort,
       remoteHome: input.remoteHome,
       installDir: input.installDir,
@@ -2447,7 +2445,6 @@ export interface HostMutations {
     host: string;
     port?: number;
     user?: string;
-    identityFile?: string;
     remotePort?: number;
     remoteHome?: string;
     installDir?: string;

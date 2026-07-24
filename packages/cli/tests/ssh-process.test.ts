@@ -30,10 +30,6 @@ describe("ssh-process: buildSshBaseArgs", () => {
     expect(args).toContain("alice@server.example.com");
   });
 
-  it("adds IdentityFile when configured", () => {
-    const args = buildSshBaseArgs(makeConfig({ identityFile: "/key" }));
-    expect(args).toContain("IdentityFile=/key");
-  });
 
   it("uses the configured SSH port", () => {
     const args = buildSshBaseArgs(makeConfig({ port: 2222 }));

@@ -35,9 +35,6 @@ export function buildSshBaseArgs(
       "ControlPersist=300",
     );
   }
-  if (config.identityFile) {
-    args.push("-o", `IdentityFile=${config.identityFile}`);
-  }
   if (!options?.askpassPath && !options?.tty) {
     args.push("-o", "BatchMode=yes");
   }

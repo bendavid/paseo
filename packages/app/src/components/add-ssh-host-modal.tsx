@@ -70,7 +70,6 @@ export function AddSshHostModal({ visible, onClose, onCancel, onSaved }: AddSshH
   const [host, setHost] = useState("");
   const [port, setPort] = useState("22");
   const [user, setUser] = useState("");
-  const [identityFile, setIdentityFile] = useState("");
 
   const header = useMemo<SheetHeader>(() => ({ title: "SSH Connection" }), []);
   const icon = useMemo(() => <Terminal size={16} />, []);
@@ -79,7 +78,6 @@ export function AddSshHostModal({ visible, onClose, onCancel, onSaved }: AddSshH
     setHost("");
     setPort("22");
     setUser("");
-    setIdentityFile("");
     setErrorMessage("");
   }, []);
 
@@ -111,7 +109,6 @@ export function AddSshHostModal({ visible, onClose, onCancel, onSaved }: AddSshH
         host: trimmedHost,
         port: port.trim() ? Number(port) : undefined,
         ...(trimmedUser ? { user: trimmedUser } : {}),
-        ...(identityFile.trim() ? { identityFile: identityFile.trim() } : {}),
       });
       onSaved?.({ serverId, hostname });
       handleClose();
@@ -124,17 +121,7 @@ export function AddSshHostModal({ visible, onClose, onCancel, onSaved }: AddSshH
     } finally {
       setIsSaving(false);
     }
-  }, [
-    host,
-    user,
-    port,
-    identityFile,
-    isSaving,
-    isMobile,
-    onSaved,
-    handleClose,
-    probeAndUpsertSshConnection,
-  ]);
+  }, [host, user, port, isSaving, isMobile, onSaved, handleClose, probeAndUpsertSshConnection]);
 
   return (
     <AdaptiveModalSheet
@@ -197,27 +184,11 @@ export function AddSshHostModal({ visible, onClose, onCancel, onSaved }: AddSshH
         />
       </View>
 
-      <View style={styles.field}>
-        <Text style={styles.label}>Identity file (optional)</Text>
-        <AdaptiveTextInput
-          testID="ssh-identity-input"
-          accessibilityLabel="Identity file"
-          value={identityFile}
-          onChangeText={setIdentityFile}
-          placeholder="~/.ssh/id_ed25519"
-          style={styles.input}
-          autoCapitalize="none"
-          autoCorrect={false}
-          editable={!isSaving}
-          returnKeyType="done"
-        />
-      </View>
-
       {errorMessage ? <Text style={styles.error}>{errorMessage}</Text> : null}
 
       <View style={styles.buttonRow}>
         <Button variant="ghost" onPress={handleCancel} disabled={isSaving}>
-          {t("common.cancel")}
+          {t("common.actions.cancel")}
         </Button>
         <Button
           variant="default"

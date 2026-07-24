@@ -110,8 +110,7 @@ function sshConnectionEquals(left: SshHostConnection, right: SshHostConnection):
     left.host === right.host &&
     left.port === right.port &&
     left.user === right.user &&
-    left.remotePort === right.remotePort &&
-    left.identityFile === right.identityFile
+    left.remotePort === right.remotePort
   );
 }
 
@@ -316,7 +315,6 @@ function parseSshConnectionRecord(record: Record<string, unknown>): SshHostConne
       host,
       port: record.port,
       ...(user ? { user } : {}),
-      ...(typeof record.identityFile === "string" ? { identityFile: record.identityFile } : {}),
       remotePort: record.remotePort,
       remoteHome: record.remoteHome,
       installDir: record.installDir,
