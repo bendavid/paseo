@@ -591,8 +591,12 @@ export const ru: TranslationResources = {
       },
       container: {
         running: "Запуск в контейнере",
+        runningTooltip: "Агенты, терминалы и git работают в изолированной контейнерной среде",
         starting: "Запуск контейнера",
+        startingTooltip:
+          "Сборка и запуск контейнерной среды. Агенты и терминалы будут ждать готовности.",
         stopped: "Контейнер остановлен",
+        stoppedTooltip: "Контейнерная среда больше не запущена",
       },
       toasts: {
         workspacePathUnavailable: "Путь Workspace пока недоступен.",

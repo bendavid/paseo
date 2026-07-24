@@ -586,8 +586,12 @@ export const ar: TranslationResources = {
       },
       container: {
         running: "يعمل في حاوية",
+        runningTooltip: "تعمل الوكلاء والمحطات الطرفية و git داخل بيئة حاوية معزولة",
         starting: "بدء الحاوية",
+        startingTooltip:
+          "جاري بناء وبدء بيئة الحاوية. سينتظر الوكلاء والمحطات الطرفية حتى تكون جاهزة.",
         stopped: "توقفت الحاوية",
+        stoppedTooltip: "بيئة الحاوية لم تعد تعمل",
       },
       toasts: {
         workspacePathUnavailable: "مسار Workspace غير متاح بعد",

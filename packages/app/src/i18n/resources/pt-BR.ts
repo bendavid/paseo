@@ -589,8 +589,13 @@ export const ptBR: TranslationResources = {
       },
       container: {
         running: "Executando em contêiner",
+        runningTooltip:
+          "Agentes, terminais e git são executados dentro de um ambiente de contêiner isolado",
         starting: "Iniciando contêiner",
+        startingTooltip:
+          "Construindo e iniciando o ambiente do contêiner. Agentes e terminais aguardarão até que esteja pronto.",
         stopped: "Contêiner parado",
+        stoppedTooltip: "O ambiente do contêiner não está mais em execução",
       },
       toasts: {
         workspacePathUnavailable: "O caminho do workspace ainda não está disponível",

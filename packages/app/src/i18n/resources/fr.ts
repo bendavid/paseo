@@ -591,8 +591,13 @@ export const fr: TranslationResources = {
       },
       container: {
         running: "Exécution dans le conteneur",
+        runningTooltip:
+          "Les agents, terminaux et git s'exécutent dans un environnement conteneurisé isolé",
         starting: "Démarrage du conteneur",
+        startingTooltip:
+          "Construction et démarrage de l'environnement conteneurisé. Les agents et terminaux attendront qu'il soit prêt.",
         stopped: "Conteneur arrêté",
+        stoppedTooltip: "L'environnement conteneurisé n'est plus en cours d'exécution",
       },
       toasts: {
         workspacePathUnavailable: "Le cheminWorkspacen'est pas encore disponible",

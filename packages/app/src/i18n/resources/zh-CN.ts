@@ -582,8 +582,11 @@ export const zhCN: TranslationResources = {
       },
       container: {
         running: "在容器中运行",
+        runningTooltip: "代理、终端和 git 在隔离的容器环境中运行",
         starting: "正在启动容器",
+        startingTooltip: "正在构建和启动容器环境。代理和终端将等待直到准备就绪。",
         stopped: "容器已停止",
+        stoppedTooltip: "容器环境不再运行",
       },
       toasts: {
         workspacePathUnavailable: "Workspace 路径尚不可用",

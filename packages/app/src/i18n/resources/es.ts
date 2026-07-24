@@ -591,8 +591,13 @@ export const es: TranslationResources = {
       },
       container: {
         running: "Ejecutando en contenedor",
+        runningTooltip:
+          "Los agentes, terminales y git se ejecutan dentro de un entorno de contenedor aislado",
         starting: "Iniciando contenedor",
+        startingTooltip:
+          "Construyendo e iniciando el entorno del contenedor. Los agentes y terminales esperarán hasta que esté listo.",
         stopped: "Contenedor detenido",
+        stoppedTooltip: "El entorno del contenedor ya no está en ejecución",
       },
       toasts: {
         workspacePathUnavailable: "La rutaWorkspaceaún no está disponible",

@@ -1277,15 +1277,24 @@ function WorkspaceHeaderTitleBar({
         <View style={styles.headerTitleTextGroup}>
           <ScreenTitle testID="workspace-header-title">{title}</ScreenTitle>
           {containerStatus ? (
-            <View style={styles.containerBadge} testID="workspace-container-badge">
-              <ThemedContainer
-                size={12}
-                uniProps={containerStatus === "running" ? greenColorMapping : mutedColorMapping}
-              />
-              <Text style={styles.containerBadgeText}>
-                {t(`workspace.header.container.${containerStatus}`)}
-              </Text>
-            </View>
+            <Tooltip delayDuration={0} enabledOnDesktop>
+              <TooltipTrigger asChild>
+                <View style={styles.containerBadge} testID="workspace-container-badge">
+                  <ThemedContainer
+                    size={12}
+                    uniProps={containerStatus === "running" ? greenColorMapping : mutedColorMapping}
+                  />
+                  <Text style={styles.containerBadgeText}>
+                    {t(`workspace.header.container.${containerStatus}`)}
+                  </Text>
+                </View>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" align="center" offset={4}>
+                <Text style={styles.containerTooltipText}>
+                  {t(`workspace.header.container.${containerStatus}Tooltip`)}
+                </Text>
+              </TooltipContent>
+            </Tooltip>
           ) : null}
           {showSubtitle ? (
             <Text
@@ -3984,6 +3993,10 @@ const styles = StyleSheet.create((theme) => ({
   containerBadgeText: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
+  },
+  containerTooltipText: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.popoverForeground,
   },
   headerTitleSkeleton: {
     width: 220,

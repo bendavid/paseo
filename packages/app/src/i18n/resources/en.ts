@@ -583,8 +583,12 @@ export const en = {
       },
       container: {
         running: "Running in container",
+        runningTooltip: "Agents, terminals, and git run inside an isolated container environment",
         starting: "Starting container",
+        startingTooltip:
+          "Building and starting the container environment. Agents and terminals will wait until ready.",
         stopped: "Container stopped",
+        stoppedTooltip: "The container environment is no longer running",
       },
       toasts: {
         workspacePathUnavailable: "Workspace path is not available yet",

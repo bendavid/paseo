@@ -36,6 +36,7 @@ import * as Clipboard from "expo-clipboard";
 import { DiffStat } from "@/components/diff-stat";
 import {
   CircleAlert,
+  Container,
   ChevronDown,
   ChevronRight,
   ExternalLink,
@@ -148,8 +149,9 @@ const ThemedCircleAlert = withUnistyles(CircleAlert);
 const ThemedSyncedLoader = withUnistyles(SyncedLoader);
 const ThemedPlus = withUnistyles(Plus);
 const ThemedMoreVertical = withUnistyles(MoreVertical);
-const ThemedTrash2 = withUnistyles(Trash2);
 const ThemedSettings = withUnistyles(Settings);
+const ThemedTrash2 = withUnistyles(Trash2);
+const ThemedContainer = withUnistyles(Container);
 
 const foregroundColorMapping = (theme: Theme) => ({
   color: theme.colors.foreground,
@@ -665,9 +667,18 @@ function WorkspaceRowRightGroup({
   const showKebab = Boolean(onArchive && (isHovered || isTouchPlatform));
   const showKebabInSlot = showKebab && !showShortcut;
   const shouldRenderActionSlot = Boolean(onArchive || workspace.diffStat);
-
   return (
     <>
+      {workspace.containerStatus ? (
+        <ThemedContainer
+          size={12}
+          uniProps={
+            workspace.containerStatus === "running"
+              ? greenColorMapping
+              : foregroundMutedColorMapping
+          }
+        />
+      ) : null}
       {isCreating ? (
         <Text style={styles.workspaceCreatingText}>{t("sidebar.workspace.status.creating")}</Text>
       ) : null}

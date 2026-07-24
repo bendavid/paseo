@@ -588,8 +588,12 @@ export const ja: TranslationResources = {
       },
       container: {
         running: "コンテナで実行中",
+        runningTooltip: "エージェント、ターミナル、git は分離されたコンテナ環境内で実行されます",
         starting: "コンテナを起動中",
+        startingTooltip:
+          "コンテナ環境をビルドして起動しています。エージェントとターミナルは準備ができるまで待機します。",
         stopped: "コンテナが停止しました",
+        stoppedTooltip: "コンテナ環境は実行されていません",
       },
       toasts: {
         workspacePathUnavailable: "ワークスペースパスはまだ利用できません",
