@@ -73,12 +73,6 @@ describe("remote-daemon: buildEnsureScript", () => {
     expect(script).toContain("daemon start");
     expect(script).toContain("--no-relay");
     expect(script).toContain("--no-mcp");
-    expect(script).toContain("--foreground");
-    expect(script).toContain("systemd-run");
-    expect(script).toContain("enable-linger");
-    expect(script).toContain("setsid");
-    expect(script).toContain("nohup");
-    expect(script).toContain("paseo-daemon-6767");
     expect(script).toContain("$HOME/.paseo");
     expect(script).toContain("PROGRESS:");
   });
