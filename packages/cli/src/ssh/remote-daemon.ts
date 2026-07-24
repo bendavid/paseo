@@ -120,6 +120,8 @@ export interface EnsureRemoteDaemonOptions {
   exec?: (command: string) => Promise<SshExecResult>;
   /** Path to an SSH_ASKPASS program for interactive password prompts. */
   askpassPath?: string;
+  /** SSH ControlMaster socket path for connection multiplexing. */
+  controlPath?: string;
   /** Per-command timeout in milliseconds (default 120s; install may be slow). */
   commandTimeoutMs?: number;
   /** How long to wait for a freshly launched daemon to accept connections. */
@@ -156,7 +158,11 @@ export async function ensureRemoteDaemon(
   const exec =
     options.exec ??
     ((command: string) =>
-      sshExec(config, command, { timeoutMs: commandTimeoutMs, askpassPath: options.askpassPath }));
+      sshExec(config, command, {
+        timeoutMs: commandTimeoutMs,
+        askpassPath: options.askpassPath,
+        controlPath: options.controlPath,
+      }));
 
   const progress = (message: string) => onProgress?.(message);
 

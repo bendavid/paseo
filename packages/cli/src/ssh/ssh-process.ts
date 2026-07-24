@@ -9,10 +9,13 @@ import type { SshHostConfig } from "./ssh-host-config.js";
  * Base SSH arguments. When `askpassPath` is set, BatchMode is dropped so SSH
  * can prompt for a password via the SSH_ASKPASS program. Without it, BatchMode
  * ensures auth fails fast instead of hanging on a prompt the user can't see.
+ * When `controlPath` is set, SSH connection multiplexing (ControlMaster) is
+ * enabled so multiple sshExec calls and the tunnel share a single TCP
+ * connection — the user authenticates once, not once per command.
  */
 export function buildSshBaseArgs(
   config: SshHostConfig,
-  options?: { askpassPath?: string },
+  options?: { askpassPath?: string; controlPath?: string },
 ): string[] {
   const args = [
     "-p",
@@ -22,6 +25,16 @@ export function buildSshBaseArgs(
     "-o",
     "ConnectTimeout=10",
   ];
+  if (options?.controlPath) {
+    args.push(
+      "-o",
+      "ControlMaster=auto",
+      "-o",
+      `ControlPath=${options.controlPath}`,
+      "-o",
+      "ControlPersist=300",
+    );
+  }
   if (!options?.askpassPath) {
     args.push("-o", "BatchMode=yes");
   }
@@ -37,6 +50,8 @@ export interface SshExecOptions {
   timeoutMs?: number;
   /** Path to an SSH_ASKPASS program. When set, BatchMode is dropped. */
   askpassPath?: string;
+  /** SSH ControlMaster socket path for connection multiplexing. */
+  controlPath?: string;
 }
 
 export interface SshExecResult {
@@ -59,7 +74,13 @@ export function sshExec(
   options?: SshExecOptions,
 ): Promise<SshExecResult> {
   return new Promise((resolve) => {
-    const sshArgs = [...buildSshBaseArgs(config, { askpassPath: options?.askpassPath }), command];
+    const sshArgs = [
+      ...buildSshBaseArgs(config, {
+        askpassPath: options?.askpassPath,
+        controlPath: options?.controlPath,
+      }),
+      command,
+    ];
     const spawnOpts: SpawnOptions = {
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
@@ -181,10 +202,18 @@ export class SshTunnel {
   static async open(
     config: SshHostConfig,
     remotePort: number,
-    options?: { localPort?: number; readyTimeoutMs?: number; askpassPath?: string },
+    options?: {
+      localPort?: number;
+      readyTimeoutMs?: number;
+      askpassPath?: string;
+      controlPath?: string;
+    },
   ): Promise<SshTunnel> {
     const localPort = options?.localPort ?? (await findFreeLocalPort());
-    const sshBaseArgs = buildSshBaseArgs(config, { askpassPath: options?.askpassPath });
+    const sshBaseArgs = buildSshBaseArgs(config, {
+      askpassPath: options?.askpassPath,
+      controlPath: options?.controlPath,
+    });
     const args = [
       "-L",
       `${localPort}:127.0.0.1:${remotePort}`,

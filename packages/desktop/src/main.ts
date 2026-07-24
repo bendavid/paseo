@@ -621,8 +621,10 @@ function parseSshConfig(config: Record<string, unknown>) {
 }
 ipcMain.handle("paseo:ssh:open-tunnel", async (_event, config: Record<string, unknown>) => {
   const sshConfig = parseSshConfig(config);
+  const controlPath = `/tmp/paseo-ssh-mux-${sshConfig.user}-${sshConfig.host}-${sshConfig.port}`;
   const tunnel = await SshTunnel.open(sshConfig, sshConfig.remotePort, {
     askpassPath: sshAskpassScript,
+    controlPath,
   });
   const tunnelId = randomUUID();
   sshTunnels.set(tunnelId, tunnel);
@@ -640,9 +642,12 @@ ipcMain.handle("paseo:ssh:close-tunnel", async (_event, tunnelId: string) => {
 ipcMain.handle(
   "paseo:ssh:ensure-remote-daemon",
   async (_event, config: Record<string, unknown>) => {
+    const sshConfig = parseSshConfig(config);
+    const controlPath = `/tmp/paseo-ssh-mux-${sshConfig.user}-${sshConfig.host}-${sshConfig.port}`;
     return ensureRemoteDaemon({
-      config: parseSshConfig(config),
+      config: sshConfig,
       askpassPath: sshAskpassScript,
+      controlPath,
     });
   },
 );
