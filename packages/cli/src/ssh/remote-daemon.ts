@@ -82,6 +82,7 @@ export function buildEnsureScript(config: SshHostConfig, version: string): strin
   const home = remoteHomePath(config);
   const installDir = remoteInstallPath(config);
   const bin = `"${installDir}/node_modules/.bin/paseo"`;
+  const log = `${home}/daemon.log`;
   const port = config.remotePort;
   const spec = version.trim() ? `@getpaseo/cli@${version}` : "@getpaseo/cli";
   const readyTimeoutMs = 30_000;
@@ -108,10 +109,29 @@ export function buildEnsureScript(config: SshHostConfig, version: string): strin
     `  echo "PROGRESS:Paseo is already installed on the remote host." >&2`,
     `fi`,
     ``,
-    `# 4. Launch the daemon (uses the CLI's native daemonization)`,
+    `# 4. Launch the daemon`,
     `echo "PROGRESS:Launching the Paseo daemon on ${config.host}…" >&2`,
     `mkdir -p "${home}"`,
-    `${bin} daemon start --home "${home}" --port ${port} --no-relay --no-mcp`,
+    `launched=0`,
+    `if command -v systemd-run >/dev/null 2>&1; then`,
+    `  # systemd-run --user starts the daemon in a transient service with its`,
+    `  # own cgroup, so it survives the SSH session closing on systems with`,
+    `  # KillUserProcesses=yes (common on modern Linux). enable-linger keeps`,
+    `  # the user's systemd instance alive after the last session closes.`,
+    `  loginctl enable-linger 2>/dev/null || true`,
+    `  systemctl --user reset-failed paseo-daemon-${port} 2>/dev/null || true`,
+    `  if systemd-run --user --unit=paseo-daemon-${port} --quiet \\`,
+    `    ${bin} daemon start --foreground --home "${home}" --port ${port} --no-relay --no-mcp \\`,
+    `    2>>"${log}"; then`,
+    `    launched=1`,
+    `  fi`,
+    `fi`,
+    `if [ $launched -eq 0 ]; then`,
+    `  # Fallback: setsid+nohup. Works on non-systemd systems or systems`,
+    `  # without KillUserProcesses=yes.`,
+    `  setsid nohup ${bin} daemon start --foreground --home "${home}" --port ${port} --no-relay --no-mcp \\`,
+    `    > "${log}" 2>&1 < /dev/null &`,
+    `fi`,
     ``,
     `# 5. Wait for the port to accept connections`,
     `echo "PROGRESS:Waiting for the remote daemon to become ready…" >&2`,
