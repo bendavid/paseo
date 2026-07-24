@@ -1,11 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { buildSshBaseArgs } from "../src/ssh/ssh-process.js";
 import {
-  buildInstallCheckCommand,
-  buildInstallCommand,
-  buildLaunchCommand,
-  buildNodeCheckCommand,
-  buildPortCheckCommand,
+  buildEnsureScript,
   ensureRemoteDaemon,
   remoteExpandHome,
   remoteHomePath,
@@ -63,43 +59,30 @@ describe("remote-daemon: path helpers", () => {
     expect(remotePaseoBin(config)).toBe('"$HOME/.paseo/cli/node_modules/.bin/paseo"');
   });
 });
-
-describe("remote-daemon: command builders", () => {
-  it("builds a node port check command", () => {
-    const cmd = buildPortCheckCommand(6767);
-    expect(cmd).toContain("6767");
-    expect(cmd).toContain("node -e");
-    expect(cmd).toContain("connect");
-  });
-
-  it("builds a node/npm check command", () => {
-    expect(buildNodeCheckCommand()).toBe("node -v && npm -v");
-  });
-
-  it("builds an install check command", () => {
-    const config = makeConfig();
-    const cmd = buildInstallCheckCommand(config);
-    expect(cmd).toContain("paseo");
-    expect(cmd).toMatch(/installed|missing/);
-  });
-
-  it("builds an install command with the version", () => {
-    const config = makeConfig();
-    const cmd = buildInstallCommand(config, "1.2.3");
-    expect(cmd).toContain("npm install");
-    expect(cmd).toContain("@getpaseo/cli@1.2.3");
-    expect(cmd).toContain("$HOME/.paseo/cli");
-  });
-
-  it("builds a launch command with no-relay and no-mcp", () => {
+describe("remote-daemon: buildEnsureScript", () => {
+  it("includes port check, node check, install, launch, and ready wait", () => {
     const config = makeConfig({ remotePort: 6767 });
-    const cmd = buildLaunchCommand(config);
-    expect(cmd).toContain("daemon start");
-    expect(cmd).toContain("--no-relay");
-    expect(cmd).toContain("--no-mcp");
-    expect(cmd).toContain("--port 6767");
-    expect(cmd).toContain("nohup");
-    expect(cmd).toContain("$HOME/.paseo");
+    const script = buildEnsureScript(config, "1.2.3");
+    expect(script).toContain("6767");
+    expect(script).toContain("node -e");
+    expect(script).toContain("node -v");
+    expect(script).toContain("npm -v");
+    expect(script).toContain("npm install");
+    expect(script).toContain("@getpaseo/cli@1.2.3");
+    expect(script).toContain("$HOME/.paseo/cli");
+    expect(script).toContain("daemon start");
+    expect(script).toContain("--no-relay");
+    expect(script).toContain("--no-mcp");
+    expect(script).toContain("nohup");
+    expect(script).toContain("$HOME/.paseo");
+    expect(script).toContain("PROGRESS:");
+  });
+
+  it("uses latest when version is empty", () => {
+    const config = makeConfig();
+    const script = buildEnsureScript(config, "");
+    expect(script).toContain("@getpaseo/cli");
+    expect(script).not.toContain("@getpaseo/cli@");
   });
 });
 
@@ -134,111 +117,79 @@ function makeEnsureOptions(
   return {
     config: makeConfig(),
     exec,
-    readyTimeoutMs: 1000,
     ...overrides,
   };
 }
 
 describe("remote-daemon: ensureRemoteDaemon", () => {
-  it("does nothing when the daemon is already running", async () => {
-    const exec = fakeExec([{ command: /connect/, result: { exitCode: 0 } }]);
+  it("returns ready when the script exits 0 (daemon already running)", async () => {
+    const exec = fakeExec([
+      {
+        command: /.*/,
+        result: { exitCode: 0, stderr: "PROGRESS:Remote daemon is already running.\n" },
+      },
+    ]);
     const result = await ensureRemoteDaemon(makeEnsureOptions(exec));
     expect(result).toEqual({ installed: false, launched: false, ready: true });
   });
 
-  it("installs and launches when node is present but paseo is missing", async () => {
+  it("returns ready when the script exits 0 after install and launch", async () => {
     const exec = fakeExec([
-      { command: /connect/, result: { exitCode: 1 } }, // port check: not running
-      { command: /node -v/, result: { exitCode: 0, stdout: "v20.0.0\n" } }, // node check
-      { command: /installed|missing/, result: { stdout: "missing\n" } }, // install check
-      { command: /npm install/, result: { exitCode: 0 } }, // install
-      { command: /nohup/, result: { exitCode: 0 } }, // launch
-      { command: /connect/, result: { exitCode: 0 } }, // ready poll
+      {
+        command: /.*/,
+        result: {
+          exitCode: 0,
+          stderr: "PROGRESS:Installing Paseo…\nPROGRESS:Remote daemon is ready.\n",
+        },
+      },
     ]);
     const result = await ensureRemoteDaemon(makeEnsureOptions(exec));
-    expect(result.installed).toBe(true);
-    expect(result.launched).toBe(true);
-    expect(result.ready).toBe(true);
+    expect(result).toEqual({ installed: false, launched: false, ready: true });
   });
 
-  it("launches without installing when paseo is already installed", async () => {
-    const exec = fakeExec([
-      { command: /connect/, result: { exitCode: 1 } },
-      { command: /node -v/, result: { exitCode: 0 } },
-      { command: /installed|missing/, result: { stdout: "installed\n" } },
-      { command: /nohup/, result: { exitCode: 0 } },
-      { command: /connect/, result: { exitCode: 0 } },
-    ]);
-    const result = await ensureRemoteDaemon(makeEnsureOptions(exec));
-    expect(result.installed).toBe(false);
-    expect(result.launched).toBe(true);
-    expect(result.ready).toBe(true);
-  });
-
-  it("throws when node is missing", async () => {
-    const exec = fakeExec([
-      { command: /connect/, result: { exitCode: 1 } },
-      { command: /node -v/, result: { exitCode: 127 } },
-    ]);
+  it("throws when node is missing (exit 10)", async () => {
+    const exec = fakeExec([{ command: /.*/, result: { exitCode: 10 } }]);
     await expect(ensureRemoteDaemon(makeEnsureOptions(exec))).rejects.toThrow(/Node.js/);
   });
 
-  it("throws SSH auth error when permission denied, not 'node missing'", async () => {
-    const exec = fakeExec([
-      { command: /connect/, result: { exitCode: 1 } },
-      {
-        command: /node -v/,
-        result: { exitCode: 255, stderr: "Permission denied (publickey).\n" },
-      },
-    ]);
-    await expect(ensureRemoteDaemon(makeEnsureOptions(exec))).rejects.toThrow(
-      /SSH connection to .* failed: Permission denied/,
-    );
-  });
-
-  it("throws SSH auth error on port check when permission denied", async () => {
-    const exec = fakeExec([
-      {
-        command: /connect/,
-        result: { exitCode: 255, stderr: "Permission denied (publickey).\n" },
-      },
-    ]);
-    await expect(ensureRemoteDaemon(makeEnsureOptions(exec))).rejects.toThrow(
-      /SSH connection to .* failed: Permission denied/,
-    );
-  });
-
-  it("throws when install fails", async () => {
-    const exec = fakeExec([
-      { command: /connect/, result: { exitCode: 1 } },
-      { command: /node -v/, result: { exitCode: 0 } },
-      { command: /installed|missing/, result: { stdout: "missing\n" } },
-      { command: /npm install/, result: { exitCode: 1, stderr: "npm ERR" } },
-    ]);
+  it("throws when install fails (exit 11)", async () => {
+    const exec = fakeExec([{ command: /.*/, result: { exitCode: 11, stderr: "npm ERR\n" } }]);
     await expect(ensureRemoteDaemon(makeEnsureOptions(exec))).rejects.toThrow(/Failed to install/);
   });
 
-  it("throws when the daemon does not become ready", async () => {
-    const exec = fakeExec([
-      { command: /connect/, result: { exitCode: 1 } },
-      { command: /node -v/, result: { exitCode: 0 } },
-      { command: /installed|missing/, result: { stdout: "installed\n" } },
-      { command: /nohup/, result: { exitCode: 0 } },
-      { command: /connect/, result: { exitCode: 1 } }, // never ready
-    ]);
-    await expect(
-      ensureRemoteDaemon(makeEnsureOptions(exec, { readyTimeoutMs: 200 })),
-    ).rejects.toThrow(/did not become ready/);
+  it("throws when daemon does not become ready (exit 12)", async () => {
+    const exec = fakeExec([{ command: /.*/, result: { exitCode: 12 } }]);
+    await expect(ensureRemoteDaemon(makeEnsureOptions(exec))).rejects.toThrow(
+      /did not become ready/,
+    );
   });
 
-  it("reports progress", async () => {
+  it("throws SSH auth error when permission denied (exit 255)", async () => {
+    const exec = fakeExec([
+      { command: /.*/, result: { exitCode: 255, stderr: "Permission denied (publickey).\n" } },
+    ]);
+    await expect(ensureRemoteDaemon(makeEnsureOptions(exec))).rejects.toThrow(
+      /SSH connection to .* failed: Permission denied/,
+    );
+  });
+
+  it("throws on unexpected exit code", async () => {
+    const exec = fakeExec([{ command: /.*/, result: { exitCode: 99, stderr: "weird\n" } }]);
+    await expect(ensureRemoteDaemon(makeEnsureOptions(exec))).rejects.toThrow(/Failed to ensure/);
+  });
+
+  it("reports progress from stderr PROGRESS: lines", async () => {
     const messages: string[] = [];
-    const exec = fakeExec([{ command: /connect/, result: { exitCode: 0 } }]);
+    const exec = fakeExec([
+      {
+        command: /.*/,
+        result: { exitCode: 0, stderr: "PROGRESS:Remote daemon is already running.\n" },
+      },
+    ]);
     await ensureRemoteDaemon({
       ...makeEnsureOptions(exec),
       onProgress: (m) => messages.push(m),
     });
-    expect(messages.length).toBeGreaterThan(0);
-    expect(messages.some((m) => m.includes("already running"))).toBe(true);
+    expect(messages).toContain("Remote daemon is already running.");
   });
 });

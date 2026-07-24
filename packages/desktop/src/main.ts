@@ -641,11 +641,9 @@ ipcMain.handle(
   "paseo:ssh:ensure-remote-daemon",
   async (_event, config: Record<string, unknown>) => {
     const sshConfig = parseSshConfig(config);
-    const controlPath = `/tmp/paseo-ssh-mux-${sshConfig.user}-${sshConfig.host}-${sshConfig.port}`;
     return ensureRemoteDaemon({
       config: sshConfig,
       askpassPath: sshAskpassScript,
-      controlPath,
     });
   },
 );
