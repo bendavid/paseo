@@ -73,7 +73,6 @@ describe("remote-daemon: buildEnsureScript", () => {
     expect(script).toContain("daemon start");
     expect(script).toContain("--no-relay");
     expect(script).toContain("--no-mcp");
-    expect(script).toContain("nohup");
     expect(script).toContain("$HOME/.paseo");
     expect(script).toContain("PROGRESS:");
   });

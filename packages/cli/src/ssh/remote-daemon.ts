@@ -82,7 +82,6 @@ export function buildEnsureScript(config: SshHostConfig, version: string): strin
   const home = remoteHomePath(config);
   const installDir = remoteInstallPath(config);
   const bin = `"${installDir}/node_modules/.bin/paseo"`;
-  const log = `${home}/daemon-remote.out`;
   const port = config.remotePort;
   const spec = version.trim() ? `@getpaseo/cli@${version}` : "@getpaseo/cli";
   const readyTimeoutMs = 30_000;
@@ -109,10 +108,10 @@ export function buildEnsureScript(config: SshHostConfig, version: string): strin
     `  echo "PROGRESS:Paseo is already installed on the remote host." >&2`,
     `fi`,
     ``,
-    `# 4. Launch the daemon detached`,
+    `# 4. Launch the daemon (uses the CLI's native daemonization)`,
     `echo "PROGRESS:Launching the Paseo daemon on ${config.host}…" >&2`,
     `mkdir -p "${home}"`,
-    `setsid nohup ${bin} daemon start --home "${home}" --port ${port} --no-relay --no-mcp </dev/null >"${log}" 2>&1 &`,
+    `${bin} daemon start --home "${home}" --port ${port} --no-relay --no-mcp`,
     ``,
     `# 5. Wait for the port to accept connections`,
     `echo "PROGRESS:Waiting for the remote daemon to become ready…" >&2`,
