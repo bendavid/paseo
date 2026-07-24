@@ -2,8 +2,6 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
-import { isRealpathInsideRoot } from "../../../utils/path.js";
-import { PASEO_CLI_PACKAGE, type NpmGlobalPaseoInstall } from "./npm-global-cli.js";
 
 const PackageJsonSchema = z.object({ name: z.string().optional() }).passthrough();
 
@@ -14,49 +12,6 @@ export interface DaemonInstallOriginRuntime {
 export const daemonInstallOriginRuntime: DaemonInstallOriginRuntime = {
   resolveCurrentServerPackageRoot,
 };
-
-export function validateDaemonInstallOrigin(
-  install: NpmGlobalPaseoInstall,
-  daemonVersion: string | null,
-  runtime: DaemonInstallOriginRuntime = daemonInstallOriginRuntime,
-): string | null {
-  if (install.isLinked) {
-    return `The global ${PASEO_CLI_PACKAGE} install is linked; self-update only supports normal npm global installs.`;
-  }
-
-  if (daemonVersion && install.version !== daemonVersion) {
-    return `This daemon is not running from the npm global ${PASEO_CLI_PACKAGE} install (global npm has ${install.version}, daemon is ${daemonVersion}).`;
-  }
-
-  const currentServerPackageRoot = runtime.resolveCurrentServerPackageRoot();
-  if (!currentServerPackageRoot) {
-    return "Unable to verify that this daemon is running from an npm global install.";
-  }
-
-  if (!isCurrentServerUnderNpmInstall(currentServerPackageRoot, install)) {
-    return `This daemon is not running from the npm global ${PASEO_CLI_PACKAGE} install.`;
-  }
-
-  return null;
-}
-
-function isCurrentServerUnderNpmInstall(
-  currentServerPackageRoot: string,
-  install: NpmGlobalPaseoInstall,
-): boolean {
-  const roots = install.globalRootPath
-    ? [install.packagePath, globalNodeModulesPath(install.globalRootPath)]
-    : [install.packagePath];
-
-  return roots.some((root) => isRealpathInsideRoot(root, currentServerPackageRoot));
-}
-
-function globalNodeModulesPath(globalRootPath: string): string {
-  const normalized = path.normalize(globalRootPath);
-  return path.basename(normalized) === "node_modules"
-    ? normalized
-    : path.join(normalized, "node_modules");
-}
 
 function resolveCurrentServerPackageRoot(): string | null {
   return resolvePackageRootFrom(fileURLToPath(import.meta.url), "@getpaseo/server");
@@ -84,6 +39,30 @@ function resolvePackageRootFrom(startPath: string, packageName: string): string 
     if (parentDir === currentDir) {
       return null;
     }
+    currentDir = parentDir;
+  }
+}
+
+/**
+ * Resolve the npm install prefix for the running daemon. Walks up from the
+ * daemon's own package root to find the containing `node_modules` directory,
+ * then returns its parent (the prefix). Works for both global installs
+ * (e.g. /usr/lib/node_modules/...) and local-prefix installs
+ * (e.g. ~/.paseo/cli/node_modules/...).
+ */
+export function resolveNpmPrefix(
+  runtime: DaemonInstallOriginRuntime = daemonInstallOriginRuntime,
+): string | null {
+  const serverRoot = runtime.resolveCurrentServerPackageRoot();
+  if (!serverRoot) return null;
+
+  let currentDir = path.dirname(serverRoot);
+  while (true) {
+    if (path.basename(currentDir) === "node_modules") {
+      return path.dirname(currentDir);
+    }
+    const parentDir = path.dirname(currentDir);
+    if (parentDir === currentDir) return null;
     currentDir = parentDir;
   }
 }

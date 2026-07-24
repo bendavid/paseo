@@ -5,7 +5,7 @@ import {
   type DaemonSelfUpdateRuntime,
   type DaemonSelfUpdatePhase,
 } from "./daemon-self-updater.js";
-import type { CommandResult, NpmGlobalPaseoInstall } from "./npm-global-cli.js";
+import type { CommandResult } from "./npm-global-cli.js";
 
 interface TestLogger {
   errors: Array<{ obj: object; msg?: string }>;
@@ -14,26 +14,10 @@ interface TestLogger {
   warn(obj: object, msg?: string): void;
 }
 
-type Inspection = NpmGlobalPaseoInstall | Error;
-type RuntimeCall = "inspect" | "installLatest";
-
-const globalRoot = "/global/lib";
-const globalNodeModules = `${globalRoot}/node_modules`;
-const cliPackagePath = `${globalNodeModules}/@getpaseo/cli`;
+const localPrefix = "/home/user/.paseo/cli";
+const localNodeModules = `${localPrefix}/node_modules`;
+const cliPackagePath = `${localNodeModules}/@getpaseo/cli`;
 const npmServerPackageRoot = `${cliPackagePath}/node_modules/@getpaseo/server`;
-const sourceServerPackageRoot = "/repo/packages/server";
-
-function npmGlobalPaseoInstall(
-  version: string,
-  options?: { linked?: boolean },
-): NpmGlobalPaseoInstall {
-  return {
-    version,
-    packagePath: cliPackagePath,
-    globalRootPath: globalRoot,
-    isLinked: options?.linked === true,
-  };
-}
 
 function createLogger(): TestLogger {
   return {
@@ -49,33 +33,34 @@ function createLogger(): TestLogger {
 }
 
 function createRuntime(input: {
-  inspections: Inspection[];
-  currentServerPackageRoot?: string | null;
+  prefix?: string | null;
   installResult?: CommandResult;
-  calls?: RuntimeCall[];
+  inspectResult?: { version: string } | Error;
 }): DaemonSelfUpdateRuntime {
-  const calls = input.calls ?? [];
   return {
     npm: {
       async inspect() {
-        calls.push("inspect");
-        const inspection = input.inspections.shift();
-        if (!inspection) {
-          throw new Error("Unexpected npm global install inspection");
-        }
-        if (inspection instanceof Error) {
-          throw inspection;
-        }
-        return inspection;
+        throw new Error("should not be called");
       },
       async installLatest() {
-        calls.push("installLatest");
+        throw new Error("should not be called");
+      },
+      async inspectWithPrefix(prefix: string) {
+        if (input.inspectResult instanceof Error) throw input.inspectResult;
+        return {
+          version: input.inspectResult?.version ?? "0.1.96",
+          packagePath: `${prefix}/node_modules/@getpaseo/cli`,
+          globalRootPath: null,
+          isLinked: false,
+        };
+      },
+      async installLatestWithPrefix() {
         return input.installResult ?? { exitCode: 0, stdout: "changed 42 packages", stderr: "" };
       },
     },
     installOrigin: {
       resolveCurrentServerPackageRoot() {
-        return input.currentServerPackageRoot ?? npmServerPackageRoot;
+        return npmServerPackageRoot;
       },
     },
   };
@@ -101,8 +86,7 @@ async function runUpdate(input: {
 
 describe("DaemonSelfUpdater", () => {
   test("refuses a Desktop-managed daemon without touching npm", async () => {
-    const calls: RuntimeCall[] = [];
-    const runtime = createRuntime({ calls, inspections: [] });
+    const runtime = createRuntime({});
 
     const { result, phases } = await runUpdate({ runtime, desktopManaged: true });
 
@@ -112,14 +96,12 @@ describe("DaemonSelfUpdater", () => {
       newVersion: null,
     });
     expect(phases).toEqual([]);
-    expect(calls).toEqual([]);
   });
 
-  test("updates a daemon that is running from the npm global cli install", async () => {
-    const calls: RuntimeCall[] = [];
+  test("updates a daemon running from a local-prefix install", async () => {
     const runtime = createRuntime({
-      calls,
-      inspections: [npmGlobalPaseoInstall("0.1.15"), npmGlobalPaseoInstall("0.1.96")],
+      installResult: { exitCode: 0, stdout: "changed", stderr: "" },
+      inspectResult: { version: "0.1.96" },
     });
 
     const { result, phases } = await runUpdate({ runtime });
@@ -130,77 +112,72 @@ describe("DaemonSelfUpdater", () => {
       newVersion: "0.1.96",
     });
     expect(phases).toEqual(["starting", "downloading", "installing", "complete"]);
-    expect(calls).toEqual(["inspect", "installLatest", "inspect"]);
   });
 
-  test("does not run install when npm global cli is missing", async () => {
-    const calls: RuntimeCall[] = [];
+  test("returns the new version after update", async () => {
     const runtime = createRuntime({
-      calls,
-      inspections: [new Error("@getpaseo/cli is not installed with npm -g on this host")],
+      inspectResult: { version: "0.2.0" },
     });
+
+    const { result } = await runUpdate({ runtime });
+
+    expect(result.success).toBe(true);
+    expect(result.newVersion).toBe("0.2.0");
+  });
+
+  test("fails when npm install exits non-zero", async () => {
+    const runtime = createRuntime({
+      installResult: { exitCode: 1, stdout: "", stderr: "npm error" },
+    });
+
+    const { result } = await runUpdate({ runtime });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toBe("npm error");
+  });
+
+  test("succeeds even if post-install version inspection fails", async () => {
+    const runtime = createRuntime({
+      inspectResult: new Error("npm not found after update"),
+    });
+
+    const { result } = await runUpdate({ runtime });
+
+    expect(result.success).toBe(true);
+    expect(result.newVersion).toBeNull();
+  });
+
+  test("fails when the npm prefix cannot be resolved", async () => {
+    const runtime: DaemonSelfUpdateRuntime = {
+      npm: {
+        async inspect() {
+          throw new Error("should not be called");
+        },
+        async installLatest() {
+          throw new Error("should not be called");
+        },
+        async inspectWithPrefix() {
+          throw new Error("should not be called");
+        },
+        async installLatestWithPrefix() {
+          throw new Error("should not be called");
+        },
+      },
+      installOrigin: {
+        resolveCurrentServerPackageRoot() {
+          return null;
+        },
+      },
+    };
 
     const { result, phases } = await runUpdate({ runtime });
 
     expect(result.success).toBe(false);
-    expect(result.error).toBe("@getpaseo/cli is not installed with npm -g on this host");
+    expect(result.error).toBe("Unable to determine the npm install prefix for this daemon.");
     expect(phases).toEqual(["starting"]);
-    expect(calls).toEqual(["inspect"]);
-  });
-
-  test("does not update a daemon whose version does not match the npm global cli", async () => {
-    const calls: RuntimeCall[] = [];
-    const runtime = createRuntime({
-      calls,
-      inspections: [npmGlobalPaseoInstall("0.1.15")],
-    });
-
-    const { result } = await runUpdate({ runtime, daemonVersion: "0.1.96" });
-
-    expect(result).toEqual({
-      success: false,
-      error:
-        "This daemon is not running from the npm global @getpaseo/cli install (global npm has 0.1.15, daemon is 0.1.96).",
-      newVersion: null,
-    });
-    expect(calls).toEqual(["inspect"]);
-  });
-
-  test("does not update a daemon running outside the npm global package tree", async () => {
-    const calls: RuntimeCall[] = [];
-    const runtime = createRuntime({
-      calls,
-      currentServerPackageRoot: sourceServerPackageRoot,
-      inspections: [npmGlobalPaseoInstall("0.1.15")],
-    });
-
-    const { result } = await runUpdate({ runtime });
-
-    expect(result).toEqual({
-      success: false,
-      error: "This daemon is not running from the npm global @getpaseo/cli install.",
-      newVersion: null,
-    });
-    expect(calls).toEqual(["inspect"]);
-  });
-
-  test("does not update linked global installs", async () => {
-    const runtime = createRuntime({
-      inspections: [npmGlobalPaseoInstall("0.1.15", { linked: true })],
-    });
-
-    const { result } = await runUpdate({ runtime });
-
-    expect(result).toEqual({
-      success: false,
-      error:
-        "The global @getpaseo/cli install is linked; self-update only supports normal npm global installs.",
-      newVersion: null,
-    });
   });
 
   test("rejects concurrent update requests", async () => {
-    const calls: RuntimeCall[] = [];
     let resolveInstall: ((result: CommandResult) => void) | null = null;
     let installStartedResolve: (() => void) | null = null;
     const installStarted = new Promise<void>((resolve) => {
@@ -209,11 +186,20 @@ describe("DaemonSelfUpdater", () => {
     const runtime: DaemonSelfUpdateRuntime = {
       npm: {
         async inspect() {
-          calls.push("inspect");
-          return npmGlobalPaseoInstall("0.1.15");
+          throw new Error("should not be called");
         },
         async installLatest() {
-          calls.push("installLatest");
+          throw new Error("should not be called");
+        },
+        async inspectWithPrefix() {
+          return {
+            version: "0.1.96",
+            packagePath: "",
+            globalRootPath: null,
+            isLinked: false,
+          };
+        },
+        async installLatestWithPrefix() {
           installStartedResolve?.();
           return new Promise<CommandResult>((resolve) => {
             resolveInstall = resolve;
@@ -248,6 +234,5 @@ describe("DaemonSelfUpdater", () => {
 
     resolveInstall?.({ exitCode: 0, stdout: "updated", stderr: "" });
     await expect(firstUpdate).resolves.toMatchObject({ success: true });
-    expect(calls).toEqual(["inspect", "installLatest", "inspect"]);
   });
 });

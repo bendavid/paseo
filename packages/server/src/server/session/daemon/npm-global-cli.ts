@@ -52,8 +52,9 @@ export interface NpmGlobalPaseoInstall {
 export interface NpmGlobalPaseoCli {
   inspect(): Promise<NpmGlobalPaseoInstall>;
   installLatest(): Promise<CommandResult>;
+  inspectWithPrefix(prefix: string): Promise<NpmGlobalPaseoInstall>;
+  installLatestWithPrefix(prefix: string): Promise<CommandResult>;
 }
-
 export type CommandRunner = (
   command: string,
   args: string[],
@@ -138,6 +139,34 @@ export class DefaultNpmGlobalPaseoCli implements NpmGlobalPaseoCli {
 
   installLatest(): Promise<CommandResult> {
     return this.runCommand("npm", ["install", "-g", `${PASEO_CLI_PACKAGE}@latest`], {
+      timeout: NPM_INSTALL_TIMEOUT_MS,
+      maxBuffer: NPM_MAX_BUFFER_BYTES,
+    });
+  }
+
+  async inspectWithPrefix(prefix: string): Promise<NpmGlobalPaseoInstall> {
+    const result = await this.runCommand(
+      "npm",
+      ["ls", PASEO_CLI_PACKAGE, "--json", "--depth=0", "--long", "--prefix", prefix],
+      {
+        timeout: NPM_PROBE_TIMEOUT_MS,
+        maxBuffer: NPM_MAX_BUFFER_BYTES,
+      },
+    );
+
+    if (result.exitCode !== 0 && result.stdout.trim().length === 0) {
+      throw new Error(result.stderr.trim() || `${PASEO_CLI_PACKAGE} is not installed in ${prefix}`);
+    }
+
+    const install = parseNpmGlobalPaseoInstall(result.stdout);
+    if (!install) {
+      throw new Error(`${PASEO_CLI_PACKAGE} is not installed in ${prefix}`);
+    }
+    return install;
+  }
+
+  installLatestWithPrefix(prefix: string): Promise<CommandResult> {
+    return this.runCommand("npm", ["install", "--prefix", prefix, `${PASEO_CLI_PACKAGE}@latest`], {
       timeout: NPM_INSTALL_TIMEOUT_MS,
       maxBuffer: NPM_MAX_BUFFER_BYTES,
     });
