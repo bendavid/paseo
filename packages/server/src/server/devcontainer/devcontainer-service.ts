@@ -1,10 +1,16 @@
 import { resolve } from "node:path";
 import { createRequire } from "node:module";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import type { Logger } from "pino";
 import { execCommand } from "../../utils/spawn.js";
 import { discoverDevContainerConfig } from "./config-discovery.js";
-import type { ContainerBackend, ContainerUpOptions, ExecutionHandle } from "./container-backend.js";
+import type {
+  ContainerBackend,
+  ContainerInfo,
+  ContainerUpOptions,
+  ExecutionHandle,
+} from "./container-backend.js";
 import { ContainerExecLaunchStrategy } from "./launch-strategy.js";
 import type { LaunchStrategyFactory } from "./launch-strategy-registry.js";
 
@@ -80,26 +86,37 @@ export function createDevContainerBackend(
     const workspaceFolder = resolve(options.workspaceFolder);
     const existing = handles.get(workspaceFolder);
     if (existing) return existing;
+    return runUp(workspaceFolder, options, false);
+  }
 
+  async function runUp(
+    workspaceFolder: string,
+    options: ContainerUpOptions,
+    removeExisting: boolean,
+  ): Promise<ExecutionHandle> {
     const config = discoverDevContainerConfig(workspaceFolder);
     if (!config) {
       throw new Error(`No devcontainer.json found in ${workspaceFolder}`);
     }
 
-    logger.info({ workspaceFolder, configPath: config.configPath }, "Starting dev container");
+    logger.info(
+      { workspaceFolder, configPath: config.configPath },
+      removeExisting ? "Rebuilding dev container" : "Starting dev container",
+    );
+
+    const args = ["up", "--workspace-folder", workspaceFolder, "--log-level", "info"];
+    if (removeExisting) {
+      args.push("--remove-existing-container");
+    }
 
     let stdout: string;
     let stderr: string;
     try {
-      const result = await execCommand(
-        devcontainerBin,
-        ["up", "--workspace-folder", workspaceFolder, "--log-level", "info"],
-        {
-          envMode: "internal",
-          timeout: 300_000,
-          maxBuffer: 10 * 1024 * 1024,
-        },
-      );
+      const result = await execCommand(devcontainerBin, args, {
+        envMode: "internal",
+        timeout: 300_000,
+        maxBuffer: 10 * 1024 * 1024,
+      });
       stdout = result.stdout;
       stderr = result.stderr;
     } catch (error) {
@@ -162,6 +179,65 @@ export function createDevContainerBackend(
     }
   }
 
+  async function rebuild(options: ContainerUpOptions): Promise<ExecutionHandle> {
+    const workspaceFolder = resolve(options.workspaceFolder);
+    await stop(workspaceFolder);
+    logger.info({ workspaceFolder }, "Rebuilding dev container");
+    return runUp(workspaceFolder, options, true);
+  }
+
+  function getConfigHash(workspaceFolder: string): string | null {
+    const config = discoverDevContainerConfig(workspaceFolder);
+    if (!config) return null;
+    try {
+      const content = readFileSync(config.configPath, "utf-8");
+      return createHash("sha256").update(content).digest("hex");
+    } catch {
+      return null;
+    }
+  }
+
+  async function isAlreadyRunning(workspaceFolder: string): Promise<boolean> {
+    const resolved = resolve(workspaceFolder);
+    try {
+      const result = await execCommand(
+        dockerBin,
+        ["ps", "-q", "--filter", `label=devcontainer.local_folder=${resolved}`],
+        { envMode: "internal", timeout: 10_000 },
+      );
+      return result.stdout.trim().length > 0;
+    } catch {
+      return false;
+    }
+  }
+
+  async function getContainerInfo(workspaceFolder: string): Promise<ContainerInfo | null> {
+    const resolved = resolve(workspaceFolder);
+    const handle = handles.get(resolved);
+    if (!handle) return null;
+    try {
+      const result = await execCommand(
+        dockerBin,
+        ["inspect", "--format", "{{json .}}", handle.identifier],
+        { envMode: "internal", timeout: 10_000 },
+      );
+      const data = JSON.parse(result.stdout.trim()) as {
+        Name?: string;
+        Config?: { Image?: string };
+        State?: { StartedAt?: string };
+      };
+      return {
+        backend: "devcontainer",
+        containerId: handle.identifier.slice(0, 12),
+        containerName: data.Name?.replace(/^\//, "") ?? handle.identifier.slice(0, 12),
+        image: data.Config?.Image ?? "unknown",
+        startedAt: data.State?.StartedAt ?? new Date().toISOString(),
+        remoteUser: handle.remoteUser,
+      };
+    } catch {
+      return null;
+    }
+  }
   /**
    * Strategy factory: creates a ContainerExecLaunchStrategy that wraps
    * commands in `docker exec`. This is the Docker-specific exec mechanism;
@@ -183,6 +259,10 @@ export function createDevContainerBackend(
     up,
     stop,
     getHandle,
+    getContainerInfo,
+    rebuild,
+    getConfigHash,
+    isAlreadyRunning,
     createStrategy,
   };
 }

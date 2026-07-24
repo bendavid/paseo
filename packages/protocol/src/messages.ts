@@ -2433,6 +2433,57 @@ export const HubExecutionControlRequestSchema = z.object({
 });
 
 export type HubExecutionControlRequest = z.infer<typeof HubExecutionControlRequestSchema>;
+// ============================================================================
+// Container management RPCs
+// ============================================================================
+
+export const ContainerApproveRequestSchema = z.object({
+  type: z.literal("container.approve.request"),
+  workspaceId: z.string(),
+  approved: z.boolean(),
+  requestId: z.string(),
+});
+
+export const ContainerApproveResponseSchema = z.object({
+  type: z.literal("container.approve.response"),
+  payload: z.object({
+    requestId: z.string(),
+    workspaceId: z.string(),
+    containerStatus: z.enum(["running", "starting", "stopped", "none"]).nullable(),
+    error: z.string().nullable(),
+  }),
+});
+
+export const ContainerRebuildRequestSchema = z.object({
+  type: z.literal("container.rebuild.request"),
+  workspaceId: z.string(),
+  requestId: z.string(),
+});
+
+export const ContainerRebuildResponseSchema = z.object({
+  type: z.literal("container.rebuild.response"),
+  payload: z.object({
+    requestId: z.string(),
+    workspaceId: z.string(),
+    containerStatus: z.enum(["running", "starting", "stopped", "none"]).nullable(),
+    error: z.string().nullable(),
+  }),
+});
+
+export const ContainerConfigChangedNotificationSchema = z.object({
+  type: z.literal("container.config_changed"),
+  payload: z.object({
+    workspaceId: z.string(),
+  }),
+});
+
+export const ContainerApprovalRequiredNotificationSchema = z.object({
+  type: z.literal("container.approval_required"),
+  payload: z.object({
+    workspaceId: z.string(),
+    configPath: z.string(),
+  }),
+});
 
 export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   HubExecutionAgentCreateRequestSchema,
@@ -2591,6 +2642,8 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   LoopInspectRequestSchema,
   LoopLogsRequestSchema,
   LoopStopRequestSchema,
+  ContainerApproveRequestSchema,
+  ContainerRebuildRequestSchema,
 ]);
 
 export type SessionInboundMessage = z.infer<typeof SessionInboundMessageSchema>;
@@ -3142,6 +3195,24 @@ export const WorkspaceDescriptorPayloadSchema = z
     // Whether this workspace is running inside an isolated execution environment
     // (dev container, pod, VM, etc.). Absent means local execution (old daemons).
     containerStatus: z.enum(["running", "starting", "stopped"]).nullish().optional(),
+    // COMPAT(devContainers): added in v0.2.0, remove gate after 2027-07-22.
+    // Whether a devcontainer.json exists for this workspace. The client uses this
+    // to decide whether to show the "Start/Rebuild container" menu item.
+    hasDevContainerConfig: z.boolean().nullish().optional(),
+    // COMPAT(devContainers): added in v0.2.0, remove gate after 2027-07-22.
+    // Metadata about the running container for tooltip display. Absent when
+    // no container is running or on old daemons.
+    containerInfo: z
+      .object({
+        backend: z.string(),
+        containerId: z.string(),
+        containerName: z.string(),
+        image: z.string(),
+        startedAt: z.string(),
+        remoteUser: z.string(),
+      })
+      .nullish()
+      .optional(),
   })
   .transform((workspace) => ({
     ...workspace,
@@ -5334,6 +5405,10 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   LoopStopResponseSchema,
   DaemonUpdateProgressMessageSchema,
   DaemonUpdateResponseSchema,
+  ContainerApproveResponseSchema,
+  ContainerRebuildResponseSchema,
+  ContainerConfigChangedNotificationSchema,
+  ContainerApprovalRequiredNotificationSchema,
 ]);
 
 export type SessionOutboundMessage = z.infer<typeof SessionOutboundMessageSchema>;
@@ -5751,6 +5826,16 @@ export type KillTerminalResponse = z.infer<typeof KillTerminalResponseSchema>;
 export type CaptureTerminalRequest = z.infer<typeof CaptureTerminalRequestSchema>;
 export type CaptureTerminalResponse = z.infer<typeof CaptureTerminalResponseSchema>;
 export type TerminalStreamExit = z.infer<typeof TerminalStreamExitSchema>;
+export type ContainerApproveRequest = z.infer<typeof ContainerApproveRequestSchema>;
+export type ContainerApproveResponse = z.infer<typeof ContainerApproveResponseSchema>;
+export type ContainerRebuildRequest = z.infer<typeof ContainerRebuildRequestSchema>;
+export type ContainerRebuildResponse = z.infer<typeof ContainerRebuildResponseSchema>;
+export type ContainerConfigChangedNotification = z.infer<
+  typeof ContainerConfigChangedNotificationSchema
+>;
+export type ContainerApprovalRequiredNotification = z.infer<
+  typeof ContainerApprovalRequiredNotificationSchema
+>;
 
 // ============================================================================
 // WebSocket Level Messages (wraps session messages)

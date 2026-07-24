@@ -597,6 +597,24 @@ export const ru: TranslationResources = {
           "Сборка и запуск контейнерной среды. Агенты и терминалы будут ждать готовности.",
         stopped: "Контейнер остановлен",
         stoppedTooltip: "Контейнерная среда больше не запущена",
+        approvalTitle: "Обнаружен контейнер разработки",
+        approvalMessage:
+          "В этом workspace есть devcontainer.json. Запустить агенты и терминалы в изолированном контейнере?",
+        approve: "Запустить контейнер",
+        deny: "Запустить на хосте",
+        configChangedTitle: "Конфигурация контейнера изменена",
+        configChangedMessage:
+          "devcontainer.json изменился с момента сборки контейнера. Пересоберите, чтобы применить изменения.",
+        rebuild: "Пересобрать контейнер",
+        dismiss: "Отклонить",
+        rebuildAction: "Пересобрать",
+        startAction: "Запустить контейнер",
+        rebuildConfirmTitle: "Пересобрать контейнер",
+        rebuildConfirmMessage:
+          "Все запущенные агенты и терминалы будут остановлены. Пересобрать контейнер?",
+        startConfirmTitle: "Запустить контейнер",
+        startConfirmMessage:
+          "Все запущенные агенты и терминалы будут перезапущены внутри контейнера. Продолжить?",
       },
       toasts: {
         workspacePathUnavailable: "Путь Workspace пока недоступен.",

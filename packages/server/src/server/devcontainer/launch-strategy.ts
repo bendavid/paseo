@@ -1,4 +1,5 @@
-import { type ChildProcess, type SpawnOptions } from "node:child_process";
+import { type ChildProcess, type SpawnOptions, spawn } from "node:child_process";
+import { resolve } from "node:path";
 import type { ProcessEnvRecord } from "../paseo-env.js";
 import type { ExecutionHandle } from "./container-backend.js";
 
@@ -115,7 +116,6 @@ export class ContainerExecLaunchStrategy implements ProcessLaunchStrategy {
   }
 
   spawn(command: string, args: string[], options?: LaunchSpawnOptions): ChildProcess {
-    const { spawn } = require("node:child_process") as typeof import("node:child_process");
     const containerCwd = options?.cwd
       ? this.resolveCwd(options.cwd)
       : this.handle.remoteWorkspaceFolder;
@@ -162,7 +162,6 @@ export class ContainerExecLaunchStrategy implements ProcessLaunchStrategy {
   }
 
   resolveCwd(hostCwd: string): string {
-    const { resolve } = require("node:path") as typeof import("node:path");
     const resolved = resolve(hostCwd);
     if (resolved === this.hostWorkspaceFolder) {
       return this.handle.remoteWorkspaceFolder;

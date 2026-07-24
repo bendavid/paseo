@@ -108,7 +108,12 @@ import type {
   AgentProvider,
   AgentSessionConfig,
 } from "@getpaseo/protocol/agent-types";
-import type { MutableDaemonConfig, MutableDaemonConfigPatch } from "@getpaseo/protocol/messages";
+import type {
+  MutableDaemonConfig,
+  MutableDaemonConfigPatch,
+  ContainerApproveResponse,
+  ContainerRebuildResponse,
+} from "@getpaseo/protocol/messages";
 import { isRelayClientWebSocketUrl } from "@getpaseo/protocol/daemon-endpoints";
 import { terminalSubscriptionKey } from "@getpaseo/protocol/terminal-subscription-key";
 import {
@@ -5208,6 +5213,58 @@ export class DaemonClient {
         unsubscribe();
         resolve(event);
       });
+    });
+  }
+
+  // ============================================================================
+  // Container Management
+  // ============================================================================
+
+  async approveContainer(
+    workspaceId: string,
+    approved: boolean,
+    requestId?: string,
+  ): Promise<ContainerApproveResponse["payload"]> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "container.approve.request",
+        workspaceId,
+        approved,
+      },
+      responseType: "container.approve.response",
+    });
+  }
+
+  async rebuildContainer(
+    workspaceId: string,
+    requestId?: string,
+  ): Promise<ContainerRebuildResponse["payload"]> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "container.rebuild.request",
+        workspaceId,
+      },
+      responseType: "container.rebuild.response",
+    });
+  }
+
+  onContainerConfigChanged(handler: (workspaceId: string) => void): () => void {
+    return this.on("container.config_changed", (message) => {
+      if (message.type === "container.config_changed") {
+        handler(message.payload.workspaceId);
+      }
+    });
+  }
+
+  onContainerApprovalRequired(
+    handler: (workspaceId: string, configPath: string) => void,
+  ): () => void {
+    return this.on("container.approval_required", (message) => {
+      if (message.type === "container.approval_required") {
+        handler(message.payload.workspaceId, message.payload.configPath);
+      }
     });
   }
 

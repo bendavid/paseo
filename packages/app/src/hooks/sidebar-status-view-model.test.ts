@@ -32,6 +32,7 @@ function ws(
     archiveUnpushedCommitCount: null,
     scripts: [],
     hasRunningScripts: false,
+    containerStatus: undefined,
     workspaceKey: input.workspaceKey,
   };
 }

@@ -598,6 +598,24 @@ export const fr: TranslationResources = {
           "Construction et démarrage de l'environnement conteneurisé. Les agents et terminaux attendront qu'il soit prêt.",
         stopped: "Conteneur arrêté",
         stoppedTooltip: "L'environnement conteneurisé n'est plus en cours d'exécution",
+        approvalTitle: "Conteneur de développement détecté",
+        approvalMessage:
+          "Ce workspace possède un devcontainer.json. Exécuter les agents et terminaux dans un conteneur isolé ?",
+        approve: "Démarrer le conteneur",
+        deny: "Exécuter sur l'hôte",
+        configChangedTitle: "Configuration du conteneur modifiée",
+        configChangedMessage:
+          "Le devcontainer.json a changé depuis la construction du conteneur. Reconstruisez pour appliquer les modifications.",
+        rebuild: "Reconstruire le conteneur",
+        dismiss: "Ignorer",
+        rebuildAction: "Reconstruire",
+        startAction: "Démarrer le conteneur",
+        rebuildConfirmTitle: "Reconstruire le conteneur",
+        rebuildConfirmMessage:
+          "Tous les agents et terminaux en cours d'exécution seront arrêtés. Reconstruire le conteneur ?",
+        startConfirmTitle: "Démarrer le conteneur",
+        startConfirmMessage:
+          "Tous les agents et terminaux en cours d'exécution seront redémarrés dans le conteneur. Continuer ?",
       },
       toasts: {
         workspacePathUnavailable: "Le cheminWorkspacen'est pas encore disponible",

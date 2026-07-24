@@ -594,6 +594,24 @@ export const ja: TranslationResources = {
           "コンテナ環境をビルドして起動しています。エージェントとターミナルは準備ができるまで待機します。",
         stopped: "コンテナが停止しました",
         stoppedTooltip: "コンテナ環境は実行されていません",
+        approvalTitle: "devcontainerを検出しました",
+        approvalMessage:
+          "このワークスペースにはdevcontainer.jsonがあります。エージェントとターミナルを分離されたコンテナ内で実行しますか？",
+        approve: "コンテナを開始",
+        deny: "ホストで実行",
+        configChangedTitle: "コンテナ設定が変更されました",
+        configChangedMessage:
+          "コンテナのビルド後にdevcontainer.jsonが変更されました。変更を適用するには再ビルドしてください。",
+        rebuild: "コンテナを再ビルド",
+        dismiss: "閉じる",
+        rebuildAction: "再ビルド",
+        startAction: "コンテナを開始",
+        rebuildConfirmTitle: "コンテナを再ビルド",
+        rebuildConfirmMessage:
+          "実行中のすべてのエージェントとターミナルが停止されます。コンテナを再ビルドしますか？",
+        startConfirmTitle: "コンテナを開始",
+        startConfirmMessage:
+          "実行中のすべてのエージェントとターミナルがコンテナ内で再起動されます。続行しますか？",
       },
       toasts: {
         workspacePathUnavailable: "ワークスペースパスはまだ利用できません",

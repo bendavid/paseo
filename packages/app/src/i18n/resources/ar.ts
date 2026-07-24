@@ -592,6 +592,24 @@ export const ar: TranslationResources = {
           "جاري بناء وبدء بيئة الحاوية. سينتظر الوكلاء والمحطات الطرفية حتى تكون جاهزة.",
         stopped: "توقفت الحاوية",
         stoppedTooltip: "بيئة الحاوية لم تعد تعمل",
+        approvalTitle: "تم اكتشاف حاوية تطوير",
+        approvalMessage:
+          "تحتوي مساحة العمل هذه على devcontainer.json. هل تريد تشغيل الوكلاء والمحطات الطرفية داخل حاوية معزولة؟",
+        approve: "بدء الحاوية",
+        deny: "التشغيل على المضيف",
+        configChangedTitle: "تم تغيير إعدادات الحاوية",
+        configChangedMessage:
+          "تم تغيير devcontainer.json منذ بناء الحاوية. أعد البناء لتطبيق التغييرات.",
+        rebuild: "إعادة بناء الحاوية",
+        dismiss: "تجاهل",
+        rebuildAction: "إعادة البناء",
+        startAction: "بدء الحاوية",
+        rebuildConfirmTitle: "إعادة بناء الحاوية",
+        rebuildConfirmMessage:
+          "سيتم إيقاف جميع الوكلاء والمحطات الطرفية قيد التشغيل. هل تريد إعادة بناء الحاوية؟",
+        startConfirmTitle: "بدء الحاوية",
+        startConfirmMessage:
+          "سيتم إعادة تشغيل جميع الوكلاء والمحطات الطرفية قيد التشغيل داخل الحاوية. هل تريد المتابعة؟",
       },
       toasts: {
         workspacePathUnavailable: "مسار Workspace غير متاح بعد",

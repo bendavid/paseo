@@ -145,6 +145,8 @@ export interface WorkspaceDescriptor {
   githubRuntime?: WorkspaceDescriptorPayload["githubRuntime"];
   forge?: WorkspaceDescriptorPayload["forge"];
   containerStatus?: WorkspaceDescriptorPayload["containerStatus"];
+  hasDevContainerConfig?: WorkspaceDescriptorPayload["hasDevContainerConfig"];
+  containerInfo?: WorkspaceDescriptorPayload["containerInfo"];
   project?: ProjectPlacementPayload;
 }
 
@@ -178,8 +180,8 @@ export function normalizeWorkspaceDescriptor(
     scripts: (payload.scripts ?? []).map((s) => Object.assign({}, s)),
     gitRuntime: payload.gitRuntime,
     githubRuntime: payload.githubRuntime,
-    forge: payload.forge,
-    containerStatus: payload.containerStatus,
+    hasDevContainerConfig: payload.hasDevContainerConfig,
+    containerInfo: payload.containerInfo,
     project: payload.project,
   };
 }

@@ -70,6 +70,7 @@ import { WorkspaceActions } from "@/git/workspace-actions";
 import { WorkspaceOpenInEditorButton } from "@/screens/workspace/workspace-open-in-editor-button";
 import { WorkspaceScriptsButton } from "@/screens/workspace/workspace-scripts-button";
 import { ImportSessionSheet } from "@/components/import-session-sheet";
+import { ContainerApprovalBanner } from "@/components/container-approval-banner";
 import { useToast } from "@/contexts/toast-context";
 import { selectIsFileExplorerOpen, usePanelStore } from "@/stores/panel-store";
 import { type ExplorerCheckoutContext } from "@/stores/explorer-checkout-context";
@@ -981,6 +982,9 @@ interface WorkspaceHeaderMenuProps {
   normalizedServerId: string;
   currentBranchName: string | null;
   showWorkspaceSetup: boolean;
+  containerStatus?: "running" | "starting" | "stopped";
+  hasDevContainerConfig?: boolean;
+  onRebuildContainer: () => void;
   showCreateBrowserTab: boolean;
   isMobile: boolean;
   createTerminalDisabled: boolean;
@@ -1062,6 +1066,9 @@ function WorkspaceHeaderMenu({
   normalizedServerId,
   currentBranchName,
   showWorkspaceSetup,
+  containerStatus,
+  hasDevContainerConfig,
+  onRebuildContainer,
   showCreateBrowserTab,
   isMobile,
   createTerminalDisabled,
@@ -1165,6 +1172,20 @@ function WorkspaceHeaderMenu({
             </DropdownMenuItem>
           </>
         ) : null}
+        {hasDevContainerConfig ? (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              testID="workspace-header-container-action"
+              leading={menuSettingsIcon}
+              onSelect={onRebuildContainer}
+            >
+              {containerStatus === "running"
+                ? t("workspace.header.container.rebuildAction")
+                : t("workspace.header.container.startAction")}
+            </DropdownMenuItem>
+          </>
+        ) : null}
         <DropdownMenuSeparator />
         <DropdownMenuLabel>{t("workspace.tabs.actions.terminalProfilesMenu")}</DropdownMenuLabel>
         <DropdownMenuItem
@@ -1200,8 +1221,10 @@ interface WorkspaceHeaderTitleBarProps {
   title: string;
   subtitle: string;
   showSubtitle: boolean;
-  currentBranchName: string | null;
   containerStatus?: "running" | "starting" | "stopped";
+  hasDevContainerConfig?: boolean;
+  containerInfo?: WorkspaceDescriptor["containerInfo"];
+  currentBranchName: string | null;
   normalizedServerId: string;
   normalizedWorkspaceId: string;
   workspaceScripts: WorkspaceDescriptor["scripts"];
@@ -1226,6 +1249,7 @@ interface WorkspaceHeaderTitleBarProps {
   onCopyWorkspacePath: () => void;
   onCopyBranchName: () => void;
   onOpenSetupTab: () => void;
+  onRebuildContainer: () => void;
   onScriptTerminalStarted: (terminalId: string) => void;
   onViewScriptTerminal: (terminalId: string) => void;
   onOpenUrlInBrowserTab: (url: string) => void;
@@ -1238,6 +1262,8 @@ function WorkspaceHeaderTitleBar({
   showSubtitle,
   currentBranchName,
   containerStatus,
+  hasDevContainerConfig,
+  containerInfo,
   normalizedServerId,
   normalizedWorkspaceId,
   workspaceScripts,
@@ -1262,6 +1288,7 @@ function WorkspaceHeaderTitleBar({
   onCopyWorkspacePath,
   onCopyBranchName,
   onOpenSetupTab,
+  onRebuildContainer,
   onScriptTerminalStarted,
   onViewScriptTerminal,
   onOpenUrlInBrowserTab,
@@ -1289,10 +1316,34 @@ function WorkspaceHeaderTitleBar({
                   </Text>
                 </View>
               </TooltipTrigger>
-              <TooltipContent side="bottom" align="center" offset={4}>
-                <Text style={styles.containerTooltipText}>
-                  {t(`workspace.header.container.${containerStatus}Tooltip`)}
-                </Text>
+              <TooltipContent side="bottom" align="center" offset={4} maxWidth={280}>
+                {containerInfo ? (
+                  <View style={styles.containerTooltipContent}>
+                    <Text style={styles.containerTooltipTitle}>
+                      {t("workspace.header.container.running")}
+                    </Text>
+                    <View style={styles.containerTooltipGrid}>
+                      <Text style={styles.containerTooltipLabel}>Backend</Text>
+                      <Text style={styles.containerTooltipValue}>{containerInfo.backend}</Text>
+                      <Text style={styles.containerTooltipLabel}>Image</Text>
+                      <Text style={styles.containerTooltipValue}>{containerInfo.image}</Text>
+                      <Text style={styles.containerTooltipLabel}>Container</Text>
+                      <Text style={styles.containerTooltipValue}>
+                        {containerInfo.containerName}
+                      </Text>
+                      <Text style={styles.containerTooltipLabel}>User</Text>
+                      <Text style={styles.containerTooltipValue}>{containerInfo.remoteUser}</Text>
+                      <Text style={styles.containerTooltipLabel}>Started</Text>
+                      <Text style={styles.containerTooltipValue}>
+                        {new Date(containerInfo.startedAt).toLocaleString()}
+                      </Text>
+                    </View>
+                  </View>
+                ) : (
+                  <Text style={styles.containerTooltipText}>
+                    {t(`workspace.header.container.${containerStatus}Tooltip`)}
+                  </Text>
+                )}
               </TooltipContent>
             </Tooltip>
           ) : null}
@@ -1312,6 +1363,8 @@ function WorkspaceHeaderTitleBar({
           normalizedServerId={normalizedServerId}
           currentBranchName={currentBranchName}
           showWorkspaceSetup={showWorkspaceSetup}
+          containerStatus={containerStatus}
+          hasDevContainerConfig={hasDevContainerConfig}
           showCreateBrowserTab={showCreateBrowserTab}
           isMobile={isMobile}
           createTerminalDisabled={createTerminalDisabled}
@@ -1331,6 +1384,7 @@ function WorkspaceHeaderTitleBar({
           onCopyWorkspacePath={onCopyWorkspacePath}
           onCopyBranchName={onCopyBranchName}
           onOpenSetupTab={onOpenSetupTab}
+          onRebuildContainer={onRebuildContainer}
         />
         {isMobile && workspaceScripts.length > 0 ? (
           <WorkspaceScriptsButton
@@ -1759,6 +1813,7 @@ function useWorkspaceTerminalTabActions({
   };
 }
 
+// eslint-disable-next-line complexity
 function WorkspaceScreenContent({
   serverId,
   workspaceId,
@@ -2937,6 +2992,32 @@ function WorkspaceScreenContent({
     }
     openWorkspaceTabFocused(persistenceKey, target);
   }, [normalizedWorkspaceId, openWorkspaceTabFocused, persistenceKey]);
+  const handleRebuildContainer = useCallback(async () => {
+    if (!client || !normalizedWorkspaceId) return;
+    const isRunning = workspaceDescriptor?.containerStatus === "running";
+    const confirmed = await confirmDialog({
+      title: isRunning
+        ? t("workspace.header.container.rebuildConfirmTitle")
+        : t("workspace.header.container.startConfirmTitle"),
+      message: isRunning
+        ? t("workspace.header.container.rebuildConfirmMessage")
+        : t("workspace.header.container.startConfirmMessage"),
+      confirmLabel: isRunning
+        ? t("workspace.header.container.rebuildAction")
+        : t("workspace.header.container.startAction"),
+      destructive: isRunning,
+    });
+    if (!confirmed) return;
+    try {
+      if (isRunning) {
+        await client.rebuildContainer(normalizedWorkspaceId);
+      } else {
+        await client.approveContainer(normalizedWorkspaceId, true);
+      }
+    } catch {
+      toast.error(t("workspace.header.container.configChangedMessage"));
+    }
+  }, [client, normalizedWorkspaceId, workspaceDescriptor, toast, t]);
 
   const handleBulkCloseTabs = useCallback(
     async (input: { tabsToClose: WorkspaceTabDescriptor[]; title: string; logLabel: string }) => {
@@ -3763,6 +3844,8 @@ function WorkspaceScreenContent({
                 title={workspaceHeaderTitle}
                 subtitle={workspaceHeaderSubtitle}
                 containerStatus={workspaceDescriptor?.containerStatus ?? undefined}
+                hasDevContainerConfig={workspaceDescriptor?.hasDevContainerConfig ?? undefined}
+                containerInfo={workspaceDescriptor?.containerInfo ?? undefined}
                 showSubtitle={shouldShowWorkspaceHeaderSubtitle}
                 currentBranchName={currentBranchName}
                 normalizedServerId={normalizedServerId}
@@ -3789,6 +3872,7 @@ function WorkspaceScreenContent({
                 onCopyWorkspacePath={handleCopyWorkspacePath}
                 onCopyBranchName={handleCopyBranchName}
                 onOpenSetupTab={handleOpenSetupTab}
+                onRebuildContainer={handleRebuildContainer}
                 onScriptTerminalStarted={handleScriptTerminalStarted}
                 onViewScriptTerminal={handleViewScriptTerminal}
                 onOpenUrlInBrowserTab={handleOpenUrlInBrowserTab}
@@ -3798,6 +3882,7 @@ function WorkspaceScreenContent({
           right={headerRight}
         />
       )}
+      <ContainerApprovalBanner serverId={normalizedServerId} workspaceId={normalizedWorkspaceId} />
 
       {isMobile ? (
         <MobileWorkspaceTabSwitcher
@@ -3996,6 +4081,26 @@ const styles = StyleSheet.create((theme) => ({
   },
   containerTooltipText: {
     fontSize: theme.fontSize.sm,
+    color: theme.colors.popoverForeground,
+  },
+  containerTooltipContent: {
+    gap: theme.spacing[2],
+  },
+  containerTooltipTitle: {
+    fontSize: theme.fontSize.sm,
+    fontWeight: "600",
+    color: theme.colors.popoverForeground,
+  },
+  containerTooltipGrid: {
+    gap: theme.spacing[1],
+  },
+  containerTooltipLabel: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foregroundMuted,
+    fontWeight: "500",
+  },
+  containerTooltipValue: {
+    fontSize: theme.fontSize.xs,
     color: theme.colors.popoverForeground,
   },
   headerTitleSkeleton: {

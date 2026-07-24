@@ -596,6 +596,24 @@ export const ptBR: TranslationResources = {
           "Construindo e iniciando o ambiente do contêiner. Agentes e terminais aguardarão até que esteja pronto.",
         stopped: "Contêiner parado",
         stoppedTooltip: "O ambiente do contêiner não está mais em execução",
+        approvalTitle: "Contêiner de desenvolvimento detectado",
+        approvalMessage:
+          "Este workspace possui um devcontainer.json. Executar agentes e terminais dentro de um contêiner isolado?",
+        approve: "Iniciar contêiner",
+        deny: "Executar no host",
+        configChangedTitle: "Configuração do contêiner alterada",
+        configChangedMessage:
+          "O devcontainer.json foi alterado desde a construção do contêiner. Reconstrua para aplicar as alterações.",
+        rebuild: "Reconstruir contêiner",
+        dismiss: "Descartar",
+        rebuildAction: "Reconstruir",
+        startAction: "Iniciar contêiner",
+        rebuildConfirmTitle: "Reconstruir contêiner",
+        rebuildConfirmMessage:
+          "Todos os agentes e terminais em execução serão interrompidos. Reconstruir o contêiner?",
+        startConfirmTitle: "Iniciar contêiner",
+        startConfirmMessage:
+          "Todos os agentes e terminais em execução serão reiniciados dentro do contêiner. Continuar?",
       },
       toasts: {
         workspacePathUnavailable: "O caminho do workspace ainda não está disponível",

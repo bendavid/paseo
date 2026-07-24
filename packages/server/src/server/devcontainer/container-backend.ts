@@ -24,6 +24,22 @@ export interface ExecutionHandle {
   remoteWorkspaceFolder: string;
 }
 
+/** Metadata about a running container, for display in the UI. */
+export interface ContainerInfo {
+  /** Backend that manages this container (e.g. "devcontainer") */
+  backend: string;
+  /** Container ID (short form for display) */
+  containerId: string;
+  /** Container name (e.g. "frosty_blackburn") */
+  containerName: string;
+  /** Image name (e.g. "registry.fedoraproject.org/fedora:44") */
+  image: string;
+  /** ISO 8601 timestamp when the container started */
+  startedAt: string;
+  /** User running inside the container */
+  remoteUser: string;
+}
+
 export interface ContainerUpOptions {
   /** Host-side workspace folder (the bind-mount source) */
   workspaceFolder: string;
@@ -49,4 +65,30 @@ export interface ContainerBackend {
 
   /** Get the handle for a running environment, or null if not running */
   getHandle(workspaceFolder: string): ExecutionHandle | null;
+
+  /**
+   * Get metadata about the running container for display in the UI.
+   * Returns null if no container is running or the info can't be retrieved.
+   */
+  getContainerInfo(workspaceFolder: string): Promise<ContainerInfo | null>;
+  /**
+   * Rebuild the environment for a workspace — stop the existing container,
+   * remove it, and run `up` again with the current config. Use this when
+   * the devcontainer.json has changed and the user approved a rebuild.
+   */
+  rebuild(options: ContainerUpOptions): Promise<ExecutionHandle>;
+
+  /**
+   * Compute a hash of the current config file for the workspace. Used to
+   * detect config changes by comparing against a previously persisted hash.
+   * Returns null if no config exists.
+   */
+  getConfigHash(workspaceFolder: string): string | null;
+
+  /**
+   * Check whether a container is already running for this workspace (e.g.
+   * from a previous daemon session). Used on startup to decide whether to
+   * reuse an existing container or start fresh.
+   */
+  isAlreadyRunning(workspaceFolder: string): Promise<boolean>;
 }

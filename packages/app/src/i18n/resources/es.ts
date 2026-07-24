@@ -598,6 +598,24 @@ export const es: TranslationResources = {
           "Construyendo e iniciando el entorno del contenedor. Los agentes y terminales esperarán hasta que esté listo.",
         stopped: "Contenedor detenido",
         stoppedTooltip: "El entorno del contenedor ya no está en ejecución",
+        approvalTitle: "Contenedor de desarrollo detectado",
+        approvalMessage:
+          "Este workspace tiene un devcontainer.json. ¿Ejecutar agentes y terminales dentro de un contenedor aislado?",
+        approve: "Iniciar contenedor",
+        deny: "Ejecutar en host",
+        configChangedTitle: "Configuración del contenedor cambiada",
+        configChangedMessage:
+          "El devcontainer.json ha cambiado desde que se construyó el contenedor. Reconstruye para aplicar los cambios.",
+        rebuild: "Reconstruir contenedor",
+        dismiss: "Descartar",
+        rebuildAction: "Reconstruir",
+        startAction: "Iniciar contenedor",
+        rebuildConfirmTitle: "Reconstruir contenedor",
+        rebuildConfirmMessage:
+          "Se detendrán todos los agentes y terminales en ejecución. ¿Reconstruir el contenedor?",
+        startConfirmTitle: "Iniciar contenedor",
+        startConfirmMessage:
+          "Se reiniciarán todos los agentes y terminales en ejecución dentro del contenedor. ¿Continuar?",
       },
       toasts: {
         workspacePathUnavailable: "La rutaWorkspaceaún no está disponible",

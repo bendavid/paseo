@@ -73,6 +73,14 @@ const PersistedWorkspaceRecordSchema = z.object({
     .nullable()
     .optional()
     .transform((value) => value ?? null),
+  // SHA-256 hash of the devcontainer.json used to build the running container.
+  // Compared on startup and file-watch to detect config drift. Null when no
+  // container has been built or no devcontainer.json exists.
+  containerConfigHash: z.string().nullable().default(null),
+  // User's approval state for container creation on this workspace.
+  // "pending" = asked but not answered, "approved" = user said yes,
+  // "denied" = user said no (run on host without a container).
+  containerApproval: z.enum(["pending", "approved", "denied"]).default("pending"),
 });
 
 export type PersistedProjectRecord = z.infer<typeof PersistedProjectRecordSchema>;

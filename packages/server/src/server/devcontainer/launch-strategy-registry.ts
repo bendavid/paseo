@@ -53,6 +53,13 @@ export interface LaunchStrategyRegistry {
   /** Deactivate isolated execution (e.g., when the environment is stopped) */
   deactivateContainer(workspaceFolder: string): void;
 
+  /**
+   * Resolve a pending activation without activating a container. Used when
+   * the user denies container creation — blocked callers fall through to
+   * the local strategy.
+   */
+  resolvePendingActivation(workspaceFolder: string): void;
+
   /** Check whether a workspace currently has an active isolated strategy */
   hasContainerStrategy(workspaceFolder: string): boolean;
 
@@ -132,6 +139,15 @@ export function createLaunchStrategyRegistry(deps: {
       const pending = pendingActivations.get(resolved);
       if (pending) {
         pending.reject(new Error("Container activation was cancelled"));
+        pendingActivations.delete(resolved);
+      }
+    },
+
+    resolvePendingActivation(workspaceFolder: string): void {
+      const resolved = resolve(workspaceFolder);
+      const pending = pendingActivations.get(resolved);
+      if (pending) {
+        pending.resolve();
         pendingActivations.delete(resolved);
       }
     },
