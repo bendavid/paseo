@@ -183,6 +183,31 @@ describe("remote-daemon: ensureRemoteDaemon", () => {
     await expect(ensureRemoteDaemon(makeEnsureOptions(exec))).rejects.toThrow(/Node.js/);
   });
 
+  it("throws SSH auth error when permission denied, not 'node missing'", async () => {
+    const exec = fakeExec([
+      { command: /connect/, result: { exitCode: 1 } },
+      {
+        command: /node -v/,
+        result: { exitCode: 255, stderr: "Permission denied (publickey).\n" },
+      },
+    ]);
+    await expect(ensureRemoteDaemon(makeEnsureOptions(exec))).rejects.toThrow(
+      /SSH connection to .* failed: Permission denied/,
+    );
+  });
+
+  it("throws SSH auth error on port check when permission denied", async () => {
+    const exec = fakeExec([
+      {
+        command: /connect/,
+        result: { exitCode: 255, stderr: "Permission denied (publickey).\n" },
+      },
+    ]);
+    await expect(ensureRemoteDaemon(makeEnsureOptions(exec))).rejects.toThrow(
+      /SSH connection to .* failed: Permission denied/,
+    );
+  });
+
   it("throws when install fails", async () => {
     const exec = fakeExec([
       { command: /connect/, result: { exitCode: 1 } },

@@ -2,6 +2,39 @@ import type { SshHostConfig } from "./ssh-host-config.js";
 import { sshExec, type SshExecResult } from "./ssh-process.js";
 
 /**
+ * Detect whether an sshExec failure is an SSH connection/auth error rather
+ * than a genuine command failure. SSH exits 255 for auth, connection refused,
+ * host key, and DNS failures — all of which should surface the SSH error, not
+ * a misleading "node not found" message.
+ */
+function isSshConnectionFailure(result: SshExecResult): boolean {
+  if (result.exitCode !== 255) return false;
+  const stderr = result.stderr.toLowerCase();
+  return (
+    stderr.includes("permission denied") ||
+    stderr.includes("connection refused") ||
+    stderr.includes("connection timed out") ||
+    stderr.includes("could not resolve hostname") ||
+    stderr.includes("host key verification failed") ||
+    stderr.includes("operation timed out") ||
+    stderr.includes("no route to host") ||
+    stderr.includes("network is unreachable")
+  );
+}
+
+function describeSshFailure(result: SshExecResult, host: string): string {
+  const stderr = result.stderr.trim();
+  if (stderr) return `SSH connection to ${host} failed: ${stderr}`;
+  return `SSH connection to ${host} failed (exit code ${result.exitCode}).`;
+}
+
+/** Throw a descriptive error if the sshExec result is an SSH connection/auth failure. */
+function assertNotSshFailure(result: SshExecResult, host: string): void {
+  if (isSshConnectionFailure(result)) {
+    throw new Error(describeSshFailure(result, host));
+  }
+}
+/**
  * Expand a leading `~` to `$HOME` for use inside a remote command. The remote
  * shell expands `$HOME` (even inside double quotes) but not `~` (inside quotes),
  * so remote commands use `$HOME`-spelled paths.
@@ -131,11 +164,13 @@ export async function ensureRemoteDaemon(
     progress("Remote daemon is already running.");
     return { installed: false, launched: false, ready: true };
   }
+  assertNotSshFailure(portCheck, config.host);
 
   // 2. Verify SSH connectivity and that node + npm are present.
   progress("Verifying node and npm on the remote host…");
   const nodeCheck = await exec(buildNodeCheckCommand());
   if (nodeCheck.exitCode !== 0) {
+    assertNotSshFailure(nodeCheck, config.host);
     throw new Error(
       `Node.js and npm are required on ${config.host} to run the Paseo daemon. ` +
         `Install Node.js (https://nodejs.org) on the remote host and retry.`,
@@ -151,6 +186,7 @@ export async function ensureRemoteDaemon(
     progress(`Installing Paseo ${version} into ${config.installDir} on ${config.host}…`);
     const install = await exec(buildInstallCommand(config, version));
     if (install.exitCode !== 0) {
+      assertNotSshFailure(install, config.host);
       throw new Error(
         `Failed to install Paseo on ${config.host}: ${install.stderr.trim() || install.stdout.trim() || "npm error"}`,
       );
@@ -163,6 +199,7 @@ export async function ensureRemoteDaemon(
   progress(`Launching the Paseo daemon on ${config.host}…`);
   const launch = await exec(buildLaunchCommand(config));
   if (launch.exitCode !== 0) {
+    assertNotSshFailure(launch, config.host);
     throw new Error(
       `Failed to launch the Paseo daemon on ${config.host}: ${launch.stderr.trim() || launch.stdout.trim() || "ssh error"}`,
     );
