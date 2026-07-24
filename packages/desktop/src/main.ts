@@ -792,6 +792,21 @@ async function createWindow(
     },
   });
 
+  // Strip the Origin header for WebSocket upgrades to loopback addresses.
+  // The Electron renderer's Origin (e.g. http://localhost:8083 from Metro) won't
+  // match the SSH tunnel port (e.g. 127.0.0.1:35173). The daemon's same-origin
+  // check rejects the mismatch, causing 1006. Without an Origin header, the
+  // daemon accepts the connection — the SSH tunnel itself is the trust boundary.
+  mainWindow.webContents.session.webRequest.onBeforeSendHeaders(
+    { urls: ["ws://127.0.0.1:*/*", "ws://localhost:*/*"] },
+    (details, callback) => {
+      if (details.resourceType === "webSocket") {
+        delete details.requestHeaders.Origin;
+      }
+      callback({ requestHeaders: details.requestHeaders });
+    },
+  );
+
   const webContentsId = mainWindow.webContents.id;
   pendingOpenProjectStore.set(webContentsId, options.pendingOpenProjectPath);
   mainWindow.webContents.on("did-start-navigation", (_event, _url, isSameDocument, isMainFrame) => {
