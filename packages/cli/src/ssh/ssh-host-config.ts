@@ -168,18 +168,19 @@ export function parseSshHostUri(uri: string): ParsedSshHostUri | null {
 
   const overrides = parseSshUriOverrides(params);
 
-  // `ssh://<id>` with no `@` is a named reference.
-  if (!authority.includes("@")) {
+  // `ssh://<id>` with no `@`, no `.`, and no `:` is a named reference.
+  // `ssh://host` or `ssh://host:port` (contains `.` or `:`) is an inline host
+  // with no user — ssh falls back to its own config.
+  if (!authority.includes("@") && !authority.includes(".") && !authority.includes(":")) {
     const id = authority.trim();
     if (!id) return null;
     return { kind: "named", id, overrides };
   }
 
-  // `ssh://user@host[:port]` is an inline host. The `@` is required to
-  // distinguish from a named reference (`ssh://<id>`).
+  // `ssh://[user@]host[:port]` is an inline host.
   const atIndex = authority.lastIndexOf("@");
-  const user = authority.slice(0, atIndex) || undefined;
-  const hostPort = authority.slice(atIndex + 1);
+  const user = atIndex >= 0 ? authority.slice(0, atIndex) || undefined : undefined;
+  const hostPort = atIndex >= 0 ? authority.slice(atIndex + 1) : authority;
   if (!hostPort) return null;
 
   const split = splitHostPort(hostPort);

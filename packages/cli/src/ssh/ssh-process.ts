@@ -15,7 +15,7 @@ import type { SshHostConfig } from "./ssh-host-config.js";
  */
 export function buildSshBaseArgs(
   config: SshHostConfig,
-  options?: { askpassPath?: string; controlPath?: string },
+  options?: { askpassPath?: string; controlPath?: string; tty?: boolean },
 ): string[] {
   const args = [
     "-p",
@@ -35,11 +35,11 @@ export function buildSshBaseArgs(
       "ControlPersist=300",
     );
   }
-  if (!options?.askpassPath) {
-    args.push("-o", "BatchMode=yes");
-  }
   if (config.identityFile) {
     args.push("-o", `IdentityFile=${config.identityFile}`);
+  }
+  if (!options?.askpassPath && !options?.tty) {
+    args.push("-o", "BatchMode=yes");
   }
   args.push(config.user ? `${config.user}@${config.host}` : config.host);
   return args;
@@ -52,6 +52,8 @@ export interface SshExecOptions {
   askpassPath?: string;
   /** SSH ControlMaster socket path for connection multiplexing. */
   controlPath?: string;
+  /** Allocate a PTY for the SSH process (terminal password prompts). */
+  tty?: boolean;
 }
 
 export interface SshExecResult {
@@ -78,21 +80,15 @@ export function sshExec(
       ...buildSshBaseArgs(config, {
         askpassPath: options?.askpassPath,
         controlPath: options?.controlPath,
+        tty: options?.tty,
       }),
+      ...(options?.tty ? ["-tt"] : []),
       command,
     ];
     const spawnOpts: SpawnOptions = {
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: options?.tty ? "inherit" : ["ignore", "pipe", "pipe"],
       windowsHide: true,
     };
-    if (options?.askpassPath) {
-      spawnOpts.env = {
-        ...process.env,
-        SSH_ASKPASS: options.askpassPath,
-        SSH_ASKPASS_REQUIRE: "force",
-        DISPLAY: process.env.DISPLAY ?? ":0",
-      };
-    }
     const child = spawn("ssh", sshArgs, spawnOpts);
 
     const stdoutChunks: Buffer[] = [];
@@ -207,12 +203,14 @@ export class SshTunnel {
       readyTimeoutMs?: number;
       askpassPath?: string;
       controlPath?: string;
+      tty?: boolean;
     },
   ): Promise<SshTunnel> {
     const localPort = options?.localPort ?? (await findFreeLocalPort());
     const sshBaseArgs = buildSshBaseArgs(config, {
       askpassPath: options?.askpassPath,
       controlPath: options?.controlPath,
+      tty: options?.tty,
     });
     const args = [
       "-L",
@@ -223,7 +221,7 @@ export class SshTunnel {
       ...sshBaseArgs,
     ];
     const spawnOpts: SpawnOptions = {
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: options?.tty ? "inherit" : ["ignore", "pipe", "pipe"],
       windowsHide: true,
     };
     if (options?.askpassPath) {

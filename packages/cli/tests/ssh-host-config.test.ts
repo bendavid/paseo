@@ -123,6 +123,15 @@ describe("ssh-host-config: parseSshHostUri", () => {
     }
   });
 
+  it("parses a bare hostname (no user) as an inline host", () => {
+    const parsed = parseSshHostUri("ssh://server.example.com");
+    expect(parsed?.kind).toBe("inline");
+    if (parsed?.kind === "inline") {
+      expect(parsed.config.user).toBeUndefined();
+      expect(parsed.config.host).toBe("server.example.com");
+    }
+  });
+
   it("parses an inline host", () => {
     const parsed = parseSshHostUri("ssh://bob@10.0.0.5:2222");
     expect(parsed?.kind).toBe("inline");

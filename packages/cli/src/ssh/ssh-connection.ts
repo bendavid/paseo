@@ -51,13 +51,19 @@ export async function connectViaSshConfig(
   config: SshHostConfig,
   options: ConnectViaSshOptions,
 ): Promise<DaemonClient> {
+  const tty = process.stdin.isTTY === true;
+
+  const sshOptions = tty ? { tty } : {};
+
   await ensureRemoteDaemon({
     config,
     version: options.version,
     onProgress: options.onProgress,
+    ...sshOptions,
   });
 
-  const tunnel = await SshTunnel.open(config, config.remotePort);
+  const tunnel = await SshTunnel.open(config, config.remotePort, sshOptions);
+
   const url = `ws://127.0.0.1:${tunnel.localPort}/ws`;
   const webSocketFactory = options.webSocketFactory ?? createNodeWebSocketFactory();
 

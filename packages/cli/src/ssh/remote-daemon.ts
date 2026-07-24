@@ -139,6 +139,8 @@ export interface EnsureRemoteDaemonOptions {
   askpassPath?: string;
   /** SSH ControlMaster socket path for connection multiplexing. */
   controlPath?: string;
+  /** Allocate a PTY for SSH (terminal password prompts). */
+  tty?: boolean;
 }
 
 export interface EnsureRemoteDaemonResult {
@@ -150,7 +152,7 @@ export interface EnsureRemoteDaemonResult {
   ready: boolean;
 }
 
-const DEFAULT_COMMAND_TIMEOUT_MS = 120_000;
+const DEFAULT_COMMAND_TIMEOUT_MS = 300_000;
 
 /**
  * Make sure a Paseo daemon is running on the remote host and accepting
@@ -171,6 +173,7 @@ export async function ensureRemoteDaemon(
         timeoutMs: commandTimeoutMs,
         askpassPath: options.askpassPath,
         controlPath: options.controlPath,
+        tty: options.tty,
       }));
 
   const progress = (message: string) => onProgress?.(message);
