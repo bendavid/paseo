@@ -4264,7 +4264,10 @@ export class AgentManager {
       context.paseoTools = await this.paseoToolCatalogFactory({ callerAgentId: agentId });
     }
     if (this.launchStrategyRegistry && cwd) {
-      context.launchStrategy = this.launchStrategyRegistry.getStrategy(cwd);
+      // Await container readiness so agents don't spawn on the host while
+      // a dev container is starting. If the container fails to start,
+      // awaitStrategy falls back to the local strategy.
+      context.launchStrategy = await this.launchStrategyRegistry.awaitStrategy(cwd);
     }
     return context;
   }

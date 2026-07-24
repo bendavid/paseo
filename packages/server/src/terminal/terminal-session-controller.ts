@@ -20,6 +20,7 @@ import {
   encodeTerminalStreamFrame,
   type TerminalStreamFrame,
 } from "@getpaseo/protocol/binary-frames/index";
+import type { ProcessLaunchStrategy } from "../server/devcontainer/launch-strategy.js";
 import { TerminalOutputCoalescer } from "./terminal-output-coalescer.js";
 import {
   MAX_CLIENT_BUFFERED_BYTES,
@@ -74,7 +75,13 @@ export interface TerminalSessionControllerOptions {
   // daemon attaches per-row soft-wrap flags to snapshots; otherwise it omits them
   // so old (strict-schema) clients still parse the snapshot.
   clientSupportsWrapReflow?: () => boolean;
-  // Current max bytes queued on the client's transport(s) but not yet sent.
+  /**
+   * Resolves the launch strategy for a workspace cwd, awaiting any pending
+   * container activation. When provided, terminals are spawned inside the
+   * container via the strategy's wrapCommand. When absent, terminals spawn
+   * on the host as before.
+   */
+  resolveLaunchStrategy?: (cwd: string) => Promise<ProcessLaunchStrategy | null>;
   // Drives the snapshot catch-up fallback: a keeping-up client reports ~0 and
   // keeps streaming; a backed-up client trips the snapshot path. Defaults to a
   // constant 0 (no backpressure signal) so callers without a transport always
@@ -130,7 +137,9 @@ export class TerminalSessionController {
   private readonly listTerminalWorkspaceRoots: () => Promise<readonly string[]>;
   private readonly clientSupportsWrapReflow: () => boolean;
   private readonly getClientBufferedAmount: () => number | null;
-
+  private readonly resolveLaunchStrategy:
+    | ((cwd: string) => Promise<ProcessLaunchStrategy | null>)
+    | null;
   // A subscription is scoped to a (cwd, workspaceId) pair, keyed by
   // terminalSubscriptionKey: two workspaces sharing a cwd subscribe and unsub
   // independently, and each only receives its own workspace's terminals. The
@@ -158,6 +167,7 @@ export class TerminalSessionController {
       (async () => (await this.listTerminalWorkspaceRefs()).map((workspace) => workspace.cwd));
     this.clientSupportsWrapReflow = options.clientSupportsWrapReflow ?? (() => false);
     this.getClientBufferedAmount = options.getClientBufferedAmount ?? (() => 0);
+    this.resolveLaunchStrategy = options.resolveLaunchStrategy ?? null;
   }
 
   start(): void {
@@ -543,6 +553,9 @@ export class TerminalSessionController {
         return;
       }
 
+      const launchStrategy = this.resolveLaunchStrategy
+        ? await this.resolveLaunchStrategy(msg.cwd)
+        : null;
       const session = await this.terminalManager.createTerminal({
         cwd: msg.cwd,
         workspaceId,
@@ -551,6 +564,7 @@ export class TerminalSessionController {
         args: msg.args,
         rows: msg.size?.rows,
         cols: msg.size?.cols,
+        ...(launchStrategy?.isIsolated ? { launchStrategy } : {}),
       });
       this.ensureExitSubscription(session);
       this.emit({

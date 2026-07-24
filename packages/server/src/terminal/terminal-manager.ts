@@ -11,6 +11,7 @@ import { resolve, sep } from "node:path";
 import { assertAbsolutePath, isSameOrDescendantPath } from "../server/path-utils.js";
 import type { TerminalActivity, TerminalActivityState } from "@getpaseo/protocol/terminal-activity";
 import { deriveTerminalActivityStatusBucket } from "@getpaseo/protocol/terminal-activity";
+import type { ProcessLaunchStrategy } from "../server/devcontainer/launch-strategy.js";
 
 export interface TerminalListItem {
   id: string;
@@ -60,6 +61,7 @@ export interface TerminalManager {
     env?: Record<string, string>;
     command?: string;
     args?: string[];
+    launchStrategy?: ProcessLaunchStrategy;
     rows?: number;
     cols?: number;
     activityToken?: string;
@@ -317,6 +319,7 @@ export function createTerminalManager(
       env?: Record<string, string>;
       command?: string;
       args?: string[];
+      launchStrategy?: ProcessLaunchStrategy;
       rows?: number;
       cols?: number;
       activityToken?: string;
@@ -353,9 +356,9 @@ export function createTerminalManager(
             ...(options.command ? { command: options.command } : {}),
             ...(options.args ? { args: options.args } : {}),
             ...(options.rows !== undefined ? { rows: options.rows } : {}),
-            ...(options.cols !== undefined ? { cols: options.cols } : {}),
             ...(mergedEnv ? { env: mergedEnv } : {}),
             activityEnv,
+            ...(options.launchStrategy ? { launchStrategy: options.launchStrategy } : {}),
           }),
         );
       } catch (error) {

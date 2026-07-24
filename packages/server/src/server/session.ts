@@ -558,11 +558,10 @@ function describeRegistryTransition(record: ArchivedRecordSnapshot | null): Regi
 
 function resolveContainerStatus(
   registry: LaunchStrategyRegistry | null,
-  pending: Set<string>,
   cwd: string,
 ): { containerStatus: "running" | "starting" } | Record<string, never> {
   if (registry?.hasContainerStrategy(cwd)) return { containerStatus: "running" };
-  if (pending.has(cwd)) return { containerStatus: "starting" };
+  if (registry?.isPendingActivation(cwd)) return { containerStatus: "starting" };
   return {};
 }
 
@@ -635,7 +634,6 @@ export class Session {
   private resolveScriptHealth!: ((hostname: string) => ScriptHealthState | null) | null;
   private launchStrategyRegistry!: LaunchStrategyRegistry | null;
   private containerBackend!: ContainerBackend | null;
-  private readonly pendingContainerActivations = new Set<string>();
   private readonly workspaceGitObserver: WorkspaceGitObserverService;
   private readonly terminalController: TerminalSessionController;
   private inflightRequests = 0;
@@ -904,6 +902,11 @@ export class Session {
       clientSupportsWrapReflow: () =>
         this.clientCapabilities.has(CLIENT_CAPS.terminalReflowableSnapshot),
       getClientBufferedAmount: () => this.getTransportBufferedAmount(),
+      resolveLaunchStrategy: async (cwd) => {
+        if (!this.launchStrategyRegistry) return null;
+        const strategy = await this.launchStrategyRegistry.awaitStrategy(cwd);
+        return strategy.isIsolated ? strategy : null;
+      },
     });
     this.agentUpdates = createAgentUpdatesService({
       emit: (message) => this.emit(message),
@@ -4260,11 +4263,7 @@ export class Session {
             project: await this.buildProjectPlacementForWorkspace(workspace, resolvedProjectRecord),
           }
         : {}),
-      ...resolveContainerStatus(
-        this.launchStrategyRegistry,
-        this.pendingContainerActivations,
-        workspace.cwd,
-      ),
+      ...resolveContainerStatus(this.launchStrategyRegistry, workspace.cwd),
     };
   }
 
@@ -4280,11 +4279,11 @@ export class Session {
     const registry = this.launchStrategyRegistry;
     if (!backend || !registry) return;
     if (registry.hasContainerStrategy(workspace.cwd)) return;
-    if (this.pendingContainerActivations.has(workspace.cwd)) return;
+    if (registry.isPendingActivation(workspace.cwd)) return;
     if (!backend.hasConfig(workspace.cwd)) return;
 
     const cwd = workspace.cwd;
-    this.pendingContainerActivations.add(cwd);
+    registry.registerPendingActivation(cwd);
     this.sessionLogger.info(
       { workspaceId: workspace.workspaceId, cwd },
       "Starting dev container for workspace",
@@ -4294,12 +4293,11 @@ export class Session {
       .up({ workspaceFolder: cwd })
       .then((handle) => {
         registry.activateContainer(cwd, handle);
-        this.pendingContainerActivations.delete(cwd);
         void this.emitWorkspaceUpdateForWorkspaceId(workspace.workspaceId);
         return;
       })
       .catch((error) => {
-        this.pendingContainerActivations.delete(cwd);
+        registry.deactivateContainer(cwd);
         this.sessionLogger.error(
           { err: error, workspaceId: workspace.workspaceId, cwd },
           "Failed to start dev container for workspace",
