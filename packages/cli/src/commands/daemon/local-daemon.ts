@@ -12,6 +12,9 @@ import { tryConnectToDaemon } from "../../utils/client.js";
  * cgroup scope that survives the originating session (e.g. an SSH session)
  * closing. Without this, systemd-logind with `KillUserProcesses=yes` kills the
  * daemon when the SSH session that started it ends.
+ *
+ * Requires `loginctl enable-linger` so the user's systemd instance persists
+ * after the last session closes. Without linger, the user manager is stopped
  */
 let systemdRunUserAvailable: boolean | null = null;
 
@@ -32,6 +35,17 @@ function isSystemdRunUserAvailable(): boolean {
     systemdRunUserAvailable = result.status === 0;
   } catch {
     systemdRunUserAvailable = false;
+  }
+  // Enable linger so the user's systemd instance persists after the session
+  // closes. Without this, systemd-logind kills the user manager (and our
+  // scope) when the last session ends. Best-effort — may require polkit
+  // privileges; if it fails, the scope still works during the session.
+  if (systemdRunUserAvailable) {
+    try {
+      spawnSync("loginctl", ["enable-linger"], { timeout: 2000, stdio: "ignore" });
+    } catch {
+      // Best-effort — linger may already be enabled or polkit may deny it.
+    }
   }
   return systemdRunUserAvailable;
 }
