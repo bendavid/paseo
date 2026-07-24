@@ -92,7 +92,6 @@ export class DaemonSession {
     this.selfUpdate = new DaemonSelfUpdateSessionController({
       clientId: this.clientId,
       daemonVersion: this.daemonVersion ?? null,
-      desktopManaged: this.daemonRuntimeConfig?.desktopManaged === true,
       emit: (msg) => this.host.emit(msg),
       emitLifecycleIntent: (intent) => this.host.emitLifecycleIntent(intent),
       sessionLogger: this.logger,

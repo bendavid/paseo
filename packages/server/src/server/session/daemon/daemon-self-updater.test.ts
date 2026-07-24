@@ -75,16 +75,12 @@ function createRuntime(input: {
 }
 async function runUpdate(input: {
   runtime: DaemonSelfUpdateRuntime;
-  daemonVersion?: string | null;
-  desktopManaged?: boolean;
   phases?: DaemonSelfUpdatePhase[];
 }) {
   const logger = createLogger();
   const updater = new DaemonSelfUpdater(input.runtime);
   const phases = input.phases ?? [];
   const result = await updater.update({
-    daemonVersion: input.daemonVersion ?? "0.1.15",
-    desktopManaged: input.desktopManaged ?? false,
     onProgress: (phase) => phases.push(phase),
     logger,
   });
@@ -92,19 +88,6 @@ async function runUpdate(input: {
 }
 
 describe("DaemonSelfUpdater", () => {
-  test("refuses a Desktop-managed daemon without touching npm", async () => {
-    const runtime = createRuntime({});
-
-    const { result, phases } = await runUpdate({ runtime, desktopManaged: true });
-
-    expect(result).toEqual({
-      success: false,
-      error: "This daemon is managed by Paseo Desktop. Update Paseo Desktop on the host.",
-      newVersion: null,
-    });
-    expect(phases).toEqual([]);
-  });
-
   test("updates a daemon running from a local-prefix install", async () => {
     const runtime = createRuntime({
       installResult: { exitCode: 0, stdout: "changed", stderr: "" },
@@ -251,12 +234,9 @@ describe("DaemonSelfUpdater", () => {
         },
       },
     };
-    const logger = createLogger();
     const updater = new DaemonSelfUpdater(runtime);
-
+    const logger = createLogger();
     const firstUpdate = updater.update({
-      daemonVersion: "0.1.15",
-      desktopManaged: false,
       onProgress: () => {},
       logger,
     });
@@ -264,8 +244,6 @@ describe("DaemonSelfUpdater", () => {
 
     await expect(
       updater.update({
-        daemonVersion: "0.1.15",
-        desktopManaged: false,
         onProgress: () => {},
         logger,
       }),

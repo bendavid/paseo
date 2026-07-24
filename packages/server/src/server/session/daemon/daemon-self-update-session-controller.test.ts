@@ -1,11 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import type { SessionInboundMessage, SessionOutboundMessage } from "../../messages.js";
-import {
-  DaemonSelfUpdateInProgressError,
-  type DaemonSelfUpdateInput,
-  type DaemonSelfUpdater,
-} from "./daemon-self-updater.js";
+import { DaemonSelfUpdateInProgressError, type DaemonSelfUpdater } from "./daemon-self-updater.js";
 import {
   DaemonSelfUpdateSessionController,
   type DaemonSelfUpdateSessionControllerOptions,
@@ -23,14 +19,12 @@ interface ControllerHarness {
 function createController(input: {
   updater: TestUpdater;
   daemonVersion?: string | null;
-  desktopManaged?: boolean;
 }): ControllerHarness {
   const emitted: SessionOutboundMessage[] = [];
   const restartIntents: RestartIntent[] = [];
   const controller = new DaemonSelfUpdateSessionController({
     clientId: "client-1",
     daemonVersion: input.daemonVersion ?? "0.1.15",
-    desktopManaged: input.desktopManaged,
     emit: (msg) => {
       emitted.push(msg);
     },
@@ -70,10 +64,8 @@ describe("DaemonSelfUpdateSessionController", () => {
   });
 
   test("emits progress, response, and restart lifecycle intent after a successful update", async () => {
-    let updateInput: DaemonSelfUpdateInput | null = null;
     const updater: TestUpdater = {
       async update(input) {
-        updateInput = input;
         input.onProgress("starting");
         input.onProgress("installing");
         return { success: true, error: null, newVersion: "0.1.96" };
@@ -83,8 +75,6 @@ describe("DaemonSelfUpdateSessionController", () => {
 
     await controller.dispatch(updateRequest);
 
-    expect(updateInput?.daemonVersion).toBe("0.1.15");
-    expect(updateInput?.desktopManaged).toBe(false);
     expect(emitted).toEqual([
       {
         type: "daemon.update.progress",
@@ -122,21 +112,17 @@ describe("DaemonSelfUpdateSessionController", () => {
   });
 
   test("emits a failed response without restart lifecycle intent", async () => {
-    let updateInput: DaemonSelfUpdateInput | null = null;
     const updater: TestUpdater = {
-      async update(input) {
-        updateInput = input;
+      async update() {
         return { success: false, error: "not an npm global install", newVersion: null };
       },
     };
     const { controller, emitted, restartIntents } = createController({
       updater,
-      desktopManaged: true,
     });
 
     await controller.dispatch(updateRequest);
 
-    expect(updateInput?.desktopManaged).toBe(true);
     expect(emitted).toEqual([
       {
         type: "daemon.update.response",

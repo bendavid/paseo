@@ -4,7 +4,7 @@ import {
   resolveNpmPrefix,
   type DaemonInstallOriginRuntime,
 } from "./install-origin.js";
-import { npmGlobalPaseoCli, type CommandResult, type NpmGlobalPaseoCli } from "./npm-global-cli.js";
+import { npmGlobalPaseoCli, type NpmGlobalPaseoCli } from "./npm-global-cli.js";
 
 export type DaemonSelfUpdatePhase = "starting" | "downloading" | "installing" | "complete";
 
@@ -15,8 +15,6 @@ export interface DaemonSelfUpdateResult {
 }
 
 export interface DaemonSelfUpdateInput {
-  daemonVersion: string | null;
-  desktopManaged: boolean;
   onProgress: (phase: DaemonSelfUpdatePhase) => void;
   logger: DaemonSelfUpdateLogger;
 }
@@ -43,19 +41,12 @@ const defaultRuntime: DaemonSelfUpdateRuntime = {
   installOrigin: daemonInstallOriginRuntime,
 };
 
-const DESKTOP_MANAGED_UPDATE_ERROR =
-  "This daemon is managed by Paseo Desktop. Update Paseo Desktop on the host.";
-
 export class DaemonSelfUpdater {
   private inProgress = false;
 
   constructor(private readonly runtime: DaemonSelfUpdateRuntime = defaultRuntime) {}
 
   async update(input: DaemonSelfUpdateInput): Promise<DaemonSelfUpdateResult> {
-    if (input.desktopManaged) {
-      return { success: false, error: DESKTOP_MANAGED_UPDATE_ERROR, newVersion: null };
-    }
-
     if (this.inProgress) {
       throw new DaemonSelfUpdateInProgressError();
     }
@@ -63,6 +54,7 @@ export class DaemonSelfUpdater {
     this.inProgress = true;
     try {
       input.onProgress("starting");
+
       // Find the npm prefix from the daemon's own install location.
       const prefix = resolveNpmPrefix(this.runtime.installOrigin);
       if (!prefix) {
@@ -74,15 +66,15 @@ export class DaemonSelfUpdater {
       }
 
       // Verify @getpaseo/cli is actually npm-managed at this prefix.
-      // System package manager installs (e.g. pacman, apt) may live under a
-      // node_modules directory but aren't npm-managed — npm ls would not find
-      // the package there.
+      // Refuses system package manager installs, desktop-bundled installs,
+      // and linked installs — anything npm ls can't find.
       try {
         await this.runtime.npm.inspectWithPrefix(prefix);
       } catch {
         return {
           success: false,
-          error: `This daemon is not running from an npm-managed @getpaseo/cli install. If installed via a system package manager, update it with that package manager.`,
+          error:
+            "This daemon is not running from an npm-managed @getpaseo/cli install. If installed via a system package manager, update it with that package manager.",
           newVersion: null,
         };
       }
@@ -90,7 +82,7 @@ export class DaemonSelfUpdater {
       input.onProgress("downloading");
       input.onProgress("installing");
 
-      const result = await this.installLatest(prefix);
+      const result = await this.runtime.npm.installLatestWithPrefix(prefix);
       if (result.exitCode !== 0) {
         const error =
           result.stderr.trim() || result.stdout.trim() || `npm exited with code ${result.exitCode}`;
@@ -114,10 +106,6 @@ export class DaemonSelfUpdater {
     } finally {
       this.inProgress = false;
     }
-  }
-
-  private async installLatest(prefix: string): Promise<CommandResult> {
-    return this.runtime.npm.installLatestWithPrefix(prefix);
   }
 
   private async inspectVersion(prefix: string): Promise<string | null> {
