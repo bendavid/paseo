@@ -181,6 +181,7 @@ export function normalizeWorkspaceDescriptor(
     gitRuntime: payload.gitRuntime,
     githubRuntime: payload.githubRuntime,
     hasDevContainerConfig: payload.hasDevContainerConfig,
+    containerStatus: payload.containerStatus,
     containerInfo: payload.containerInfo,
     project: payload.project,
   };

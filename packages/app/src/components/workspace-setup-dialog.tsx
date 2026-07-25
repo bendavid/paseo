@@ -29,6 +29,7 @@ import { requireWorkspaceDirectory } from "@/utils/workspace-directory";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import type { MessagePayload } from "@/composer/types";
+import { ContainerApprovalBanner } from "@/components/container-approval-banner";
 
 function toProjectIconDataUri(icon: { mimeType: string; data: string } | null): string | null {
   if (!icon) {
@@ -448,7 +449,9 @@ export function WorkspaceSetupDialog() {
           inputWrapperStyle={styles.composerInputWrapper}
         />
       </FileDropZone>
-
+      {createdWorkspace ? (
+        <ContainerApprovalBanner serverId={serverId} workspaceId={createdWorkspace.id} />
+      ) : null}
       {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
     </AdaptiveModalSheet>
   );

@@ -5,6 +5,7 @@ import { StyleSheet } from "react-native-unistyles";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import { useToast } from "@/contexts/toast-context";
 import { Button } from "@/components/ui/button";
+import { useWorkspaceFields } from "@/stores/session-store-hooks";
 import type { Theme } from "@/styles/theme";
 
 interface ContainerApprovalBannerProps {
@@ -16,7 +17,16 @@ export function ContainerApprovalBanner({ serverId, workspaceId }: ContainerAppr
   const { t } = useTranslation();
   const client = useHostRuntimeClient(serverId);
   const toast = useToast();
-
+  // Also check the workspace's containerStatus from the store. The
+  // container.approval_required event may have been emitted before this
+  // component mounted (e.g. during workspace creation), so the event
+  // listener missed it. A containerStatus of "starting" with no running
+  // container means approval is pending.
+  const containerStatus = useWorkspaceFields(
+    serverId,
+    workspaceId,
+    (w) => w.containerStatus ?? null,
+  );
   const [approvalPending, setApprovalPending] = useState(false);
   const [configChanged, setConfigChanged] = useState(false);
 
@@ -66,7 +76,7 @@ export function ContainerApprovalBanner({ serverId, workspaceId }: ContainerAppr
     setConfigChanged(false);
   }, []);
 
-  if (!approvalPending && !configChanged) return null;
+  if (!approvalPending && !configChanged && containerStatus !== "starting") return null;
 
   return (
     <View style={styles.container}>

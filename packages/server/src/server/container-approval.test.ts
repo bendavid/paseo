@@ -34,8 +34,9 @@ import type {
   ContainerUpOptions,
   ExecutionHandle,
 } from "./devcontainer/container-backend.js";
-import { createLaunchStrategyRegistry } from "./devcontainer/index.js";
+import { createDevContainerBackend, createLaunchStrategyRegistry } from "./devcontainer/index.js";
 import { LocalLaunchStrategy } from "./devcontainer/launch-strategy.js";
+import { execCommand } from "../utils/spawn.js";
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -494,3 +495,133 @@ test("denied workspace does not get container even if another workspace with sam
 
   expect(deniedDescriptor.containerStatus).toBeUndefined();
 });
+
+// ---------------------------------------------------------------------------
+// Real devcontainer + docker integration tests
+// These tests actually run `devcontainer up` and `docker inspect`. They are
+// skipped if Docker or the devcontainer CLI is not available.
+// ---------------------------------------------------------------------------
+
+async function isDockerAvailable(): Promise<boolean> {
+  try {
+    await execCommand("docker", ["--version"], { envMode: "internal", timeout: 5_000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const dockerAvailable = await isDockerAvailable();
+const dockerTest = dockerAvailable ? test : test.skip;
+
+// Integration test: real docker ps + devcontainer CLI.
+// Deterministic time control won't work — we're waiting for real subprocess
+// I/O (docker ps, devcontainer up) against the platform clock.
+dockerTest(
+  "real backend: isAvailable + isAlreadyRunning + getConfigHash against real docker",
+  async () => {
+    const cwd = makeDevcontainerDir();
+    const backend = createDevContainerBackend({ logger: createTestLogger() });
+
+    // isAvailable checks devcontainer CLI + docker on PATH
+    expect(await backend.isAvailable()).toBe(true);
+
+    // isAlreadyRunning runs `docker ps --filter label=...` — no container for a fresh dir
+    expect(await backend.isAlreadyRunning(cwd)).toBe(false);
+
+    // getConfigHash hashes the devcontainer.json content
+    const hash1 = backend.getConfigHash(cwd);
+    expect(hash1).not.toBeNull();
+    expect(hash1).toHaveLength(64); // SHA-256 hex
+
+    // Modifying the config changes the hash
+    writeFileSync(path.join(cwd, ".devcontainer.json"), '{"image":"alpine:latest","features":{}}');
+    const hash2 = backend.getConfigHash(cwd);
+    expect(hash2).not.toBeNull();
+    expect(hash2).not.toBe(hash1);
+  },
+  15_000,
+);
+
+dockerTest(
+  "real backend: describeWorkspaceRecord emits approval_required for pending workspace",
+  async () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "paseo-devcontainer-real-"));
+    writeFileSync(path.join(cwd, ".devcontainer.json"), '{"image":"alpine:latest"}');
+    const emitted: SessionOutboundMessage[] = [];
+    const backend = createDevContainerBackend({ logger: createTestLogger() });
+
+    expect(await backend.isAvailable()).toBe(true);
+
+    const session = createContainerTestSession({
+      backend,
+      workspaces: [makeWorkspace({ cwd, containerApproval: "pending" })],
+      emitted,
+    });
+
+    const internals = asSessionInternals<{
+      describeWorkspaceRecord: (workspace: PersistedWorkspaceRecord) => Promise<{
+        containerStatus?: string;
+        hasDevContainerConfig?: boolean;
+      }>;
+    }>(session);
+
+    const workspace = makeWorkspace({ cwd, containerApproval: "pending" });
+    // describeWorkspaceRecord awaits maybeStartContainerForWorkspace, which runs
+    // the IIFE to completion (isAvailable cached + isAlreadyRunning via docker ps).
+    // After it resolves, the pending activation is registered and
+    // container.approval_required has been emitted synchronously.
+    const descriptor = await internals.describeWorkspaceRecord(workspace);
+
+    expect(descriptor.containerStatus).toBe("starting");
+    expect(descriptor.hasDevContainerConfig).toBe(true);
+
+    const approvalMsg = emitted.find((m) => m.type === "container.approval_required");
+    expect(approvalMsg).toBeDefined();
+
+    await backend.stop(cwd).catch(() => {});
+  },
+  30_000,
+);
+
+dockerTest(
+  "real backend: container starts and containerStatus is running when approval is approved",
+  async () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "paseo-devcontainer-real-"));
+    writeFileSync(path.join(cwd, ".devcontainer.json"), '{"image":"alpine:latest"}');
+    const emitted: SessionOutboundMessage[] = [];
+    const backend = createDevContainerBackend({ logger: createTestLogger() });
+
+    expect(await backend.isAvailable()).toBe(true);
+
+    const session = createContainerTestSession({
+      backend,
+      workspaces: [makeWorkspace({ cwd, containerApproval: "approved" })],
+      emitted,
+    });
+
+    const internals = asSessionInternals<{
+      describeWorkspaceRecord: (workspace: PersistedWorkspaceRecord) => Promise<{
+        containerStatus?: string;
+      }>;
+    }>(session);
+
+    const workspace = makeWorkspace({ cwd, containerApproval: "approved" });
+    // describeWorkspaceRecord awaits maybeStartContainerForWorkspace, which runs
+    // `devcontainer up` (pulling alpine:latest + starting the container). This
+    // can take 30+ seconds on first pull.
+    const descriptor = await internals.describeWorkspaceRecord(workspace);
+
+    expect(descriptor.containerStatus).toBe("running");
+    expect(await backend.isAlreadyRunning(cwd)).toBe(true);
+
+    const info = await backend.getContainerInfo(cwd);
+    expect(info).not.toBeNull();
+    expect(info?.backend).toBe("devcontainer");
+    expect(info?.image).toBeDefined();
+    expect(info?.containerName).toBeDefined();
+
+    await backend.stop(cwd).catch(() => {});
+  },
+  120_000,
+);
