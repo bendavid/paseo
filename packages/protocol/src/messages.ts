@@ -2080,6 +2080,9 @@ export const WorkspaceCreateRequestSchema = z.object({
       worktreeSlug: z.string().optional(),
     }),
   ]),
+  // COMPAT(devContainers): added in v0.2.0. The selected container backend for
+  // this workspace. Absent means "host" (old clients).
+  containerBackend: z.enum(["host", "devcontainer"]).optional(),
 });
 
 export const WorkspaceClearAttentionRequestSchema = z.object({
@@ -2437,23 +2440,6 @@ export type HubExecutionControlRequest = z.infer<typeof HubExecutionControlReque
 // Container management RPCs
 // ============================================================================
 
-export const ContainerApproveRequestSchema = z.object({
-  type: z.literal("container.approve.request"),
-  workspaceId: z.string(),
-  approved: z.boolean(),
-  requestId: z.string(),
-});
-
-export const ContainerApproveResponseSchema = z.object({
-  type: z.literal("container.approve.response"),
-  payload: z.object({
-    requestId: z.string(),
-    workspaceId: z.string(),
-    containerStatus: z.enum(["running", "starting", "stopped", "none"]).nullable(),
-    error: z.string().nullable(),
-  }),
-});
-
 export const ContainerRebuildRequestSchema = z.object({
   type: z.literal("container.rebuild.request"),
   workspaceId: z.string(),
@@ -2470,18 +2456,41 @@ export const ContainerRebuildResponseSchema = z.object({
   }),
 });
 
+export const ContainerRestartRequestSchema = z.object({
+  type: z.literal("container.restart.request"),
+  workspaceId: z.string(),
+  requestId: z.string(),
+});
+
+export const ContainerRestartResponseSchema = z.object({
+  type: z.literal("container.restart.response"),
+  payload: z.object({
+    requestId: z.string(),
+    workspaceId: z.string(),
+    containerStatus: z.enum(["running", "starting", "stopped", "none"]).nullable(),
+    error: z.string().nullable(),
+  }),
+});
+
+export const ContainerAvailabilityRequestSchema = z.object({
+  type: z.literal("container.availability.request"),
+  cwd: z.string(),
+  requestId: z.string(),
+});
+
+export const ContainerAvailabilityResponseSchema = z.object({
+  type: z.literal("container.availability.response"),
+  payload: z.object({
+    requestId: z.string(),
+    dockerAvailable: z.boolean(),
+    hasDevContainerConfig: z.boolean(),
+  }),
+});
+
 export const ContainerConfigChangedNotificationSchema = z.object({
   type: z.literal("container.config_changed"),
   payload: z.object({
     workspaceId: z.string(),
-  }),
-});
-
-export const ContainerApprovalRequiredNotificationSchema = z.object({
-  type: z.literal("container.approval_required"),
-  payload: z.object({
-    workspaceId: z.string(),
-    configPath: z.string(),
   }),
 });
 
@@ -2642,8 +2651,9 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   LoopInspectRequestSchema,
   LoopLogsRequestSchema,
   LoopStopRequestSchema,
-  ContainerApproveRequestSchema,
+  ContainerRestartRequestSchema,
   ContainerRebuildRequestSchema,
+  ContainerAvailabilityRequestSchema,
 ]);
 
 export type SessionInboundMessage = z.infer<typeof SessionInboundMessageSchema>;
@@ -3191,6 +3201,9 @@ export const WorkspaceDescriptorPayloadSchema = z
     // Old daemons omit it; absent means the client falls back to GitHub.
     forge: z.string().optional(),
     project: ProjectPlacementPayloadSchema.optional(),
+    // COMPAT(devContainers): added in v0.2.0, remove gate after 2027-07-22.
+    // The selected container backend for this workspace. Absent means "host".
+    containerBackend: z.enum(["host", "devcontainer"]).nullish().optional(),
     // COMPAT(devContainers): added in v0.2.0, remove gate after 2027-07-22.
     // Whether this workspace is running inside an isolated execution environment
     // (dev container, pod, VM, etc.). Absent means local execution (old daemons).
@@ -5405,10 +5418,10 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   LoopStopResponseSchema,
   DaemonUpdateProgressMessageSchema,
   DaemonUpdateResponseSchema,
-  ContainerApproveResponseSchema,
+  ContainerRestartResponseSchema,
   ContainerRebuildResponseSchema,
+  ContainerAvailabilityResponseSchema,
   ContainerConfigChangedNotificationSchema,
-  ContainerApprovalRequiredNotificationSchema,
 ]);
 
 export type SessionOutboundMessage = z.infer<typeof SessionOutboundMessageSchema>;
@@ -5826,15 +5839,14 @@ export type KillTerminalResponse = z.infer<typeof KillTerminalResponseSchema>;
 export type CaptureTerminalRequest = z.infer<typeof CaptureTerminalRequestSchema>;
 export type CaptureTerminalResponse = z.infer<typeof CaptureTerminalResponseSchema>;
 export type TerminalStreamExit = z.infer<typeof TerminalStreamExitSchema>;
-export type ContainerApproveRequest = z.infer<typeof ContainerApproveRequestSchema>;
-export type ContainerApproveResponse = z.infer<typeof ContainerApproveResponseSchema>;
+export type ContainerRestartRequest = z.infer<typeof ContainerRestartRequestSchema>;
+export type ContainerRestartResponse = z.infer<typeof ContainerRestartResponseSchema>;
 export type ContainerRebuildRequest = z.infer<typeof ContainerRebuildRequestSchema>;
 export type ContainerRebuildResponse = z.infer<typeof ContainerRebuildResponseSchema>;
+export type ContainerAvailabilityRequest = z.infer<typeof ContainerAvailabilityRequestSchema>;
+export type ContainerAvailabilityResponse = z.infer<typeof ContainerAvailabilityResponseSchema>;
 export type ContainerConfigChangedNotification = z.infer<
   typeof ContainerConfigChangedNotificationSchema
->;
-export type ContainerApprovalRequiredNotification = z.infer<
-  typeof ContainerApprovalRequiredNotificationSchema
 >;
 
 // ============================================================================

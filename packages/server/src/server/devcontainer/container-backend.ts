@@ -72,12 +72,18 @@ export interface ContainerBackend {
    */
   getContainerInfo(workspaceFolder: string): Promise<ContainerInfo | null>;
   /**
+   * Restart the environment for a workspace — stop the running container and
+   * start it again with the same config. Use this when the user wants to
+   * restart the container process without rebuilding from scratch.
+   */
+  restart(options: ContainerUpOptions): Promise<ExecutionHandle>;
+
+  /**
    * Rebuild the environment for a workspace — stop the existing container,
    * remove it, and run `up` again with the current config. Use this when
    * the devcontainer.json has changed and the user approved a rebuild.
    */
   rebuild(options: ContainerUpOptions): Promise<ExecutionHandle>;
-
   /**
    * Compute a hash of the current config file for the workspace. Used to
    * detect config changes by comparing against a previously persisted hash.

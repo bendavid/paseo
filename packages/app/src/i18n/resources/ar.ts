@@ -592,24 +592,19 @@ export const ar: TranslationResources = {
           "جاري بناء وبدء بيئة الحاوية. سينتظر الوكلاء والمحطات الطرفية حتى تكون جاهزة.",
         stopped: "توقفت الحاوية",
         stoppedTooltip: "بيئة الحاوية لم تعد تعمل",
-        approvalTitle: "تم اكتشاف حاوية تطوير",
-        approvalMessage:
-          "تحتوي مساحة العمل هذه على devcontainer.json. هل تريد تشغيل الوكلاء والمحطات الطرفية داخل حاوية معزولة؟",
-        approve: "بدء الحاوية",
-        deny: "التشغيل على المضيف",
         configChangedTitle: "تم تغيير إعدادات الحاوية",
         configChangedMessage:
           "تم تغيير devcontainer.json منذ بناء الحاوية. أعد البناء لتطبيق التغييرات.",
         rebuild: "إعادة بناء الحاوية",
         dismiss: "تجاهل",
         rebuildAction: "إعادة البناء",
-        startAction: "بدء الحاوية",
+        restartAction: "إعادة تشغيل الحاوية",
         rebuildConfirmTitle: "إعادة بناء الحاوية",
         rebuildConfirmMessage:
           "سيتم إيقاف جميع الوكلاء والمحطات الطرفية قيد التشغيل. هل تريد إعادة بناء الحاوية؟",
-        startConfirmTitle: "بدء الحاوية",
-        startConfirmMessage:
-          "سيتم إعادة تشغيل جميع الوكلاء والمحطات الطرفية قيد التشغيل داخل الحاوية. هل تريد المتابعة؟",
+        restartConfirmTitle: "إعادة تشغيل الحاوية",
+        restartConfirmMessage:
+          "سيتم إعادة تشغيل جميع الوكلاء والمحطات الطرفية قيد التشغيل. هل تريد إعادة تشغيل الحاوية؟",
       },
       toasts: {
         workspacePathUnavailable: "مسار Workspace غير متاح بعد",
@@ -1278,6 +1273,12 @@ export const ar: TranslationResources = {
       hostDisconnected: "Host غير متصل",
       pendingRequired: "لا يوجد إعداد معلق لمساحة العمل",
       composerStateRequired: "مطلوب حالة مؤلف إعداد Workspace",
+    },
+    containerBackend: {
+      label: "بيئة التنفيذ",
+      host: "المضيف",
+      devcontainer: "حاوية التطوير",
+      dockerUnavailable: "Docker غير متاح",
     },
   },
   onboarding: {

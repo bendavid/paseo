@@ -70,7 +70,7 @@ import { WorkspaceActions } from "@/git/workspace-actions";
 import { WorkspaceOpenInEditorButton } from "@/screens/workspace/workspace-open-in-editor-button";
 import { WorkspaceScriptsButton } from "@/screens/workspace/workspace-scripts-button";
 import { ImportSessionSheet } from "@/components/import-session-sheet";
-import { ContainerApprovalBanner } from "@/components/container-approval-banner";
+import { ContainerConfigChangedBanner } from "@/components/container-config-changed-banner";
 import { useToast } from "@/contexts/toast-context";
 import { selectIsFileExplorerOpen, usePanelStore } from "@/stores/panel-store";
 import { type ExplorerCheckoutContext } from "@/stores/explorer-checkout-context";
@@ -984,6 +984,7 @@ interface WorkspaceHeaderMenuProps {
   showWorkspaceSetup: boolean;
   containerStatus?: "running" | "starting" | "stopped";
   hasDevContainerConfig?: boolean;
+  onRestartContainer: () => void;
   onRebuildContainer: () => void;
   showCreateBrowserTab: boolean;
   isMobile: boolean;
@@ -1068,6 +1069,7 @@ function WorkspaceHeaderMenu({
   showWorkspaceSetup,
   containerStatus,
   hasDevContainerConfig,
+  onRestartContainer,
   onRebuildContainer,
   showCreateBrowserTab,
   isMobile,
@@ -1172,17 +1174,22 @@ function WorkspaceHeaderMenu({
             </DropdownMenuItem>
           </>
         ) : null}
-        {hasDevContainerConfig ? (
+        {hasDevContainerConfig && containerStatus === "running" ? (
           <>
             <DropdownMenuSeparator />
             <DropdownMenuItem
-              testID="workspace-header-container-action"
+              testID="workspace-header-container-restart"
+              leading={menuSettingsIcon}
+              onSelect={onRestartContainer}
+            >
+              {t("workspace.header.container.restartAction")}
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              testID="workspace-header-container-rebuild"
               leading={menuSettingsIcon}
               onSelect={onRebuildContainer}
             >
-              {containerStatus === "running"
-                ? t("workspace.header.container.rebuildAction")
-                : t("workspace.header.container.startAction")}
+              {t("workspace.header.container.rebuildAction")}
             </DropdownMenuItem>
           </>
         ) : null}
@@ -1249,6 +1256,7 @@ interface WorkspaceHeaderTitleBarProps {
   onCopyWorkspacePath: () => void;
   onCopyBranchName: () => void;
   onOpenSetupTab: () => void;
+  onRestartContainer: () => void;
   onRebuildContainer: () => void;
   onScriptTerminalStarted: (terminalId: string) => void;
   onViewScriptTerminal: (terminalId: string) => void;
@@ -1288,6 +1296,7 @@ function WorkspaceHeaderTitleBar({
   onCopyWorkspacePath,
   onCopyBranchName,
   onOpenSetupTab,
+  onRestartContainer,
   onRebuildContainer,
   onScriptTerminalStarted,
   onViewScriptTerminal,
@@ -1384,6 +1393,7 @@ function WorkspaceHeaderTitleBar({
           onCopyWorkspacePath={onCopyWorkspacePath}
           onCopyBranchName={onCopyBranchName}
           onOpenSetupTab={onOpenSetupTab}
+          onRestartContainer={onRestartContainer}
           onRebuildContainer={onRebuildContainer}
         />
         {isMobile && workspaceScripts.length > 0 ? (
@@ -2992,32 +3002,37 @@ function WorkspaceScreenContent({
     }
     openWorkspaceTabFocused(persistenceKey, target);
   }, [normalizedWorkspaceId, openWorkspaceTabFocused, persistenceKey]);
-  const handleRebuildContainer = useCallback(async () => {
+  const handleRestartContainer = useCallback(async () => {
     if (!client || !normalizedWorkspaceId) return;
-    const isRunning = workspaceDescriptor?.containerStatus === "running";
     const confirmed = await confirmDialog({
-      title: isRunning
-        ? t("workspace.header.container.rebuildConfirmTitle")
-        : t("workspace.header.container.startConfirmTitle"),
-      message: isRunning
-        ? t("workspace.header.container.rebuildConfirmMessage")
-        : t("workspace.header.container.startConfirmMessage"),
-      confirmLabel: isRunning
-        ? t("workspace.header.container.rebuildAction")
-        : t("workspace.header.container.startAction"),
-      destructive: isRunning,
+      title: t("workspace.header.container.restartConfirmTitle"),
+      message: t("workspace.header.container.restartConfirmMessage"),
+      confirmLabel: t("workspace.header.container.restartAction"),
+      destructive: true,
     });
     if (!confirmed) return;
     try {
-      if (isRunning) {
-        await client.rebuildContainer(normalizedWorkspaceId);
-      } else {
-        await client.approveContainer(normalizedWorkspaceId, true);
-      }
+      await client.restartContainer(normalizedWorkspaceId);
     } catch {
       toast.error(t("workspace.header.container.configChangedMessage"));
     }
-  }, [client, normalizedWorkspaceId, workspaceDescriptor, toast, t]);
+  }, [client, normalizedWorkspaceId, toast, t]);
+
+  const handleRebuildContainer = useCallback(async () => {
+    if (!client || !normalizedWorkspaceId) return;
+    const confirmed = await confirmDialog({
+      title: t("workspace.header.container.rebuildConfirmTitle"),
+      message: t("workspace.header.container.rebuildConfirmMessage"),
+      confirmLabel: t("workspace.header.container.rebuildAction"),
+      destructive: true,
+    });
+    if (!confirmed) return;
+    try {
+      await client.rebuildContainer(normalizedWorkspaceId);
+    } catch {
+      toast.error(t("workspace.header.container.configChangedMessage"));
+    }
+  }, [client, normalizedWorkspaceId, toast, t]);
 
   const handleBulkCloseTabs = useCallback(
     async (input: { tabsToClose: WorkspaceTabDescriptor[]; title: string; logLabel: string }) => {
@@ -3872,6 +3887,7 @@ function WorkspaceScreenContent({
                 onCopyWorkspacePath={handleCopyWorkspacePath}
                 onCopyBranchName={handleCopyBranchName}
                 onOpenSetupTab={handleOpenSetupTab}
+                onRestartContainer={handleRestartContainer}
                 onRebuildContainer={handleRebuildContainer}
                 onScriptTerminalStarted={handleScriptTerminalStarted}
                 onViewScriptTerminal={handleViewScriptTerminal}
@@ -3882,7 +3898,10 @@ function WorkspaceScreenContent({
           right={headerRight}
         />
       )}
-      <ContainerApprovalBanner serverId={normalizedServerId} workspaceId={normalizedWorkspaceId} />
+      <ContainerConfigChangedBanner
+        serverId={normalizedServerId}
+        workspaceId={normalizedWorkspaceId}
+      />
 
       {isMobile ? (
         <MobileWorkspaceTabSwitcher

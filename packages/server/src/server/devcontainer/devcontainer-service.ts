@@ -179,6 +179,13 @@ export function createDevContainerBackend(
     }
   }
 
+  async function restart(options: ContainerUpOptions): Promise<ExecutionHandle> {
+    const workspaceFolder = resolve(options.workspaceFolder);
+    await stop(workspaceFolder);
+    logger.info({ workspaceFolder }, "Restarting dev container");
+    return runUp(workspaceFolder, options, false);
+  }
+
   async function rebuild(options: ContainerUpOptions): Promise<ExecutionHandle> {
     const workspaceFolder = resolve(options.workspaceFolder);
     await stop(workspaceFolder);
@@ -278,6 +285,7 @@ export function createDevContainerBackend(
     stop,
     getHandle,
     getContainerInfo,
+    restart,
     rebuild,
     getConfigHash,
     isAlreadyRunning,

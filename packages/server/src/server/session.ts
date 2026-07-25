@@ -561,12 +561,12 @@ function describeRegistryTransition(record: ArchivedRecordSnapshot | null): Regi
 function resolveContainerStatus(
   registry: LaunchStrategyRegistry | null,
   cwd: string,
-  approval: "pending" | "approved" | "denied",
+  containerBackend: "host" | "devcontainer",
 ): { containerStatus: "running" | "starting" } | Record<string, never> {
-  // A denied workspace never shows a container status, even if a container
-  // is running for this cwd (another workspace with the same cwd may have
-  // approved it).
-  if (approval === "denied") return {};
+  // A host backend never shows a container status, even if a container is
+  // running for this cwd (another workspace with the same cwd may use a
+  // devcontainer backend).
+  if (containerBackend === "host") return {};
   if (registry?.hasContainerStrategy(cwd)) return { containerStatus: "running" };
   if (registry?.isPendingActivation(cwd)) return { containerStatus: "starting" };
   return {};
@@ -912,11 +912,11 @@ export class Session {
       getClientBufferedAmount: () => this.getTransportBufferedAmount(),
       resolveLaunchStrategy: async (cwd, workspaceId) => {
         if (!this.launchStrategyRegistry) return null;
-        // If the workspace has denied container approval, run on the host
-        // even if a container is running for this cwd.
+        // If the workspace uses the host backend, run on the host even if a
+        // container is running for this cwd.
         if (workspaceId) {
           const workspace = await this.workspaceRegistry.get(workspaceId);
-          if (workspace?.containerApproval === "denied") return null;
+          if (workspace?.containerBackend === "host") return null;
         }
         const strategy = await this.launchStrategyRegistry.awaitStrategy(cwd);
         return strategy.isIsolated ? strategy : null;
@@ -2293,10 +2293,12 @@ export class Session {
 
   private dispatchContainerMessage(msg: SessionInboundMessage): Promise<void> | undefined {
     switch (msg.type) {
-      case "container.approve.request":
-        return this.handleContainerApproveRequest(msg);
+      case "container.restart.request":
+        return this.handleContainerRestartRequest(msg);
       case "container.rebuild.request":
         return this.handleContainerRebuildRequest(msg);
+      case "container.availability.request":
+        return this.handleContainerAvailabilityRequest(msg);
       default:
         return undefined;
     }
@@ -3091,10 +3093,10 @@ export class Session {
         throw new Error(`Working directory does not exist or is not a directory: ${resolvedCwd}`);
       }
 
-      // Trigger container approval/setup before the agent starts. If a
-      // devcontainer.json exists, this registers a pending activation that
-      // blocks the agent's launch strategy until the user approves (or the
-      // container is reused if already running).
+      // Trigger container setup before the agent starts. If the workspace uses
+      // the "devcontainer" backend and a devcontainer.json exists, this starts
+      // the container (or reuses it if already running). Host backends are a
+      // no-op.
       const workspaceForContainer = await this.workspaceRegistry.get(
         resolvedIntent.intent.workspaceId,
       );
@@ -4303,7 +4305,7 @@ export class Session {
       ...resolveContainerStatus(
         this.launchStrategyRegistry,
         workspace.cwd,
-        workspace.containerApproval,
+        workspace.containerBackend,
       ),
       hasDevContainerConfig: this.containerBackend?.hasConfig(workspace.cwd) ?? false,
       // containerInfo is fetched async and emitted as a follow-up workspace
@@ -4334,24 +4336,20 @@ export class Session {
   }
 
   /**
-   * Lazily start a dev container for a workspace when a devcontainer.json is
-   * present and no container is already active. Implements the approval flow:
-   * if the user hasn't been asked yet (approval "pending"), a
-   * container.approval_required notification is emitted and the container is
-   * not started until the client responds via container.approve.request. If
-   * the user previously denied, the workspace runs on the host. If already
-   * running (e.g. from a prior daemon session), the existing container is
-   * reused. Fire-and-forget: the descriptor returns immediately and a
+   * Lazily start a dev container for a workspace when the workspace uses the
+   * "devcontainer" backend and a devcontainer.json is present. Host backends
+   * run on the host directly — this is a no-op for them. If a container is
+   * already running (e.g. from a prior daemon session), the existing container
+   * is reused. Fire-and-forget: the descriptor returns immediately and a
    * workspace update is emitted once the container is up.
    */
   private maybeStartContainerForWorkspace(workspace: PersistedWorkspaceRecord): Promise<void> {
     const backend = this.containerBackend;
     const registry = this.launchStrategyRegistry;
     if (!backend || !registry) return Promise.resolve();
-    // Check per-workspace approval before checking if a container is already
-    // running for this cwd — the user may want this workspace on the host
-    // even if another workspace with the same cwd has a container.
-    if (workspace.containerApproval === "denied") return Promise.resolve();
+    // Host backends never start a container — agents and terminals run on the
+    // host directly.
+    if (workspace.containerBackend === "host") return Promise.resolve();
     if (registry.hasContainerStrategy(workspace.cwd)) return Promise.resolve();
     if (registry.isPendingActivation(workspace.cwd)) return Promise.resolve();
 
@@ -4388,18 +4386,9 @@ export class Session {
         }
         return;
       }
-      if (workspace.containerApproval !== "approved") {
-        // Block agents and terminals from starting on the host while we wait
-        // for the user's approval decision. The pending activation is resolved
-        // when the user approves (container starts) or denies (fall through to
-        // local strategy).
-        registry.registerPendingActivation(cwd);
-        this.emit({
-          type: "container.approval_required",
-          payload: { workspaceId, configPath: config.configPath },
-        });
-        return;
-      }
+      // Register a pending activation while the container starts so the
+      // workspace descriptor reports containerStatus "starting" and agents/
+      // terminals wait for the container instead of launching on the host.
       registry.registerPendingActivation(cwd);
       this.sessionLogger.info({ workspaceId, cwd }, "Starting dev container for workspace");
       try {
@@ -4500,15 +4489,15 @@ export class Session {
     }
   }
 
-  private async handleContainerApproveRequest(
-    msg: Extract<SessionInboundMessage, { type: "container.approve.request" }>,
+  private async handleContainerRestartRequest(
+    msg: Extract<SessionInboundMessage, { type: "container.restart.request" }>,
   ): Promise<void> {
-    const { workspaceId, approved, requestId } = msg;
+    const { workspaceId, requestId } = msg;
     const backend = this.containerBackend;
     const registry = this.launchStrategyRegistry;
     if (!backend || !registry) {
       this.emit({
-        type: "container.approve.response",
+        type: "container.restart.response",
         payload: {
           requestId,
           workspaceId,
@@ -4522,7 +4511,7 @@ export class Session {
     const workspace = await this.workspaceRegistry.get(workspaceId);
     if (!workspace) {
       this.emit({
-        type: "container.approve.response",
+        type: "container.restart.response",
         payload: {
           requestId,
           workspaceId,
@@ -4533,30 +4522,9 @@ export class Session {
       return;
     }
 
-    if (!approved) {
-      await this.workspaceRegistry.update(workspaceId, (record) => ({
-        ...record,
-        containerApproval: "denied",
-      }));
-      // Unblock any agents/terminals waiting on the approval decision —
-      // they'll fall through to the local (host) strategy.
-      registry.resolvePendingActivation(workspace.cwd);
-      this.emit({
-        type: "container.approve.response",
-        payload: { requestId, workspaceId, containerStatus: "none", error: null },
-      });
-      return;
-    }
-
-    await this.workspaceRegistry.update(workspaceId, (record) => ({
-      ...record,
-      containerApproval: "approved",
-    }));
-
     const cwd = workspace.cwd;
-    registry.registerPendingActivation(cwd);
-    this.sessionLogger.info({ workspaceId, cwd }, "Starting dev container after approval");
-    // Stop all running agents and kill terminals before starting the container.
+    this.sessionLogger.info({ workspaceId, cwd }, "Restarting dev container for workspace");
+    // Stop all running agents and kill terminals before restarting.
     const liveAgents = this.agentManager
       .listAgents()
       .filter((agent) => agent.workspaceId === workspaceId);
@@ -4564,7 +4532,7 @@ export class Session {
     this.terminalController.killTerminalsForWorkspace(workspaceId);
 
     try {
-      const handle = await backend.up({ workspaceFolder: cwd });
+      const handle = await backend.restart({ workspaceFolder: cwd });
       registry.activateContainer(cwd, handle);
       await this.workspaceRegistry.update(workspaceId, (record) => ({
         ...record,
@@ -4573,17 +4541,16 @@ export class Session {
       void this.emitWorkspaceUpdateForWorkspaceId(workspaceId);
       this.watchContainerConfig(workspace);
       this.emit({
-        type: "container.approve.response",
+        type: "container.restart.response",
         payload: { requestId, workspaceId, containerStatus: "running", error: null },
       });
     } catch (error) {
-      registry.deactivateContainer(cwd);
       this.sessionLogger.error(
         { err: error, workspaceId, cwd },
-        "Failed to start dev container after approval",
+        "Failed to restart dev container for workspace",
       );
       this.emit({
-        type: "container.approve.response",
+        type: "container.restart.response",
         payload: {
           requestId,
           workspaceId,
@@ -4592,6 +4559,27 @@ export class Session {
         },
       });
     }
+  }
+
+  private async handleContainerAvailabilityRequest(
+    msg: Extract<SessionInboundMessage, { type: "container.availability.request" }>,
+  ): Promise<void> {
+    const { cwd, requestId } = msg;
+    const backend = this.containerBackend;
+    let dockerAvailable = false;
+    let hasDevContainerConfig = false;
+    if (backend) {
+      try {
+        dockerAvailable = await backend.isAvailable();
+      } catch {
+        dockerAvailable = false;
+      }
+      hasDevContainerConfig = discoverDevContainerConfig(cwd) !== null;
+    }
+    this.emit({
+      type: "container.availability.response",
+      payload: { requestId, dockerAvailable, hasDevContainerConfig },
+    });
   }
 
   private async handleContainerRebuildRequest(
@@ -5496,6 +5484,7 @@ export class Session {
       explicitTitle ?? promptTitle,
       request.source.projectId,
       { expectsInitialAgent: Boolean(request.firstAgentContext) },
+      request.containerBackend,
     );
     await this.syncWorkspaceGitObserverForWorkspace(workspace);
     const descriptor = await this.describeWorkspaceRecord(workspace);

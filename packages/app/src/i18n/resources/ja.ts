@@ -594,24 +594,19 @@ export const ja: TranslationResources = {
           "コンテナ環境をビルドして起動しています。エージェントとターミナルは準備ができるまで待機します。",
         stopped: "コンテナが停止しました",
         stoppedTooltip: "コンテナ環境は実行されていません",
-        approvalTitle: "devcontainerを検出しました",
-        approvalMessage:
-          "このワークスペースにはdevcontainer.jsonがあります。エージェントとターミナルを分離されたコンテナ内で実行しますか？",
-        approve: "コンテナを開始",
-        deny: "ホストで実行",
         configChangedTitle: "コンテナ設定が変更されました",
         configChangedMessage:
           "コンテナのビルド後にdevcontainer.jsonが変更されました。変更を適用するには再ビルドしてください。",
         rebuild: "コンテナを再ビルド",
         dismiss: "閉じる",
         rebuildAction: "再ビルド",
-        startAction: "コンテナを開始",
+        restartAction: "コンテナを再起動",
         rebuildConfirmTitle: "コンテナを再ビルド",
         rebuildConfirmMessage:
           "実行中のすべてのエージェントとターミナルが停止されます。コンテナを再ビルドしますか？",
-        startConfirmTitle: "コンテナを開始",
-        startConfirmMessage:
-          "実行中のすべてのエージェントとターミナルがコンテナ内で再起動されます。続行しますか？",
+        restartConfirmTitle: "コンテナを再起動",
+        restartConfirmMessage:
+          "実行中のすべてのエージェントとターミナルが再起動されます。コンテナを再起動しますか？",
       },
       toasts: {
         workspacePathUnavailable: "ワークスペースパスはまだ利用できません",
@@ -1292,6 +1287,12 @@ export const ja: TranslationResources = {
       hostDisconnected: "ホストが接続されていません",
       pendingRequired: "保留中のワークスペースセットアップがありません",
       composerStateRequired: "ワークスペースセットアップのコンポーザー状態が必要です",
+    },
+    containerBackend: {
+      label: "実行環境",
+      host: "ホスト",
+      devcontainer: "Dev Container",
+      dockerUnavailable: "Dockerは利用できません",
     },
   },
   onboarding: {

@@ -589,24 +589,19 @@ export const en = {
           "Building and starting the container environment. Agents and terminals will wait until ready.",
         stopped: "Container stopped",
         stoppedTooltip: "The container environment is no longer running",
-        approvalTitle: "Dev container detected",
-        approvalMessage:
-          "This workspace has a devcontainer.json. Run agents and terminals inside an isolated container?",
-        approve: "Start container",
-        deny: "Run on host",
         configChangedTitle: "Container config changed",
         configChangedMessage:
           "The devcontainer.json has changed since the container was built. Rebuild to apply the changes.",
         rebuild: "Rebuild container",
         dismiss: "Dismiss",
         rebuildAction: "Rebuild",
-        startAction: "Start container",
+        restartAction: "Restart container",
         rebuildConfirmTitle: "Rebuild container",
         rebuildConfirmMessage:
-          "All running agents and terminals will be stopped. Rebuild the container?",
-        startConfirmTitle: "Start container",
-        startConfirmMessage:
-          "All running agents and terminals will be restarted inside the container. Continue?",
+          "All running agents and terminals will be stopped. Rebuild the container from scratch?",
+        restartConfirmTitle: "Restart container",
+        restartConfirmMessage:
+          "All running agents and terminals will be restarted. Restart the container?",
       },
       toasts: {
         workspacePathUnavailable: "Workspace path is not available yet",
@@ -1289,6 +1284,12 @@ export const en = {
       hostDisconnected: "Host is not connected",
       pendingRequired: "No workspace setup is pending",
       composerStateRequired: "Workspace setup composer state is required",
+    },
+    containerBackend: {
+      label: "Execution environment",
+      host: "Host",
+      devcontainer: "Dev Container",
+      dockerUnavailable: "Docker is not available",
     },
   },
   onboarding: {

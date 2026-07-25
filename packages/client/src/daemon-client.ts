@@ -111,8 +111,9 @@ import type {
 import type {
   MutableDaemonConfig,
   MutableDaemonConfigPatch,
-  ContainerApproveResponse,
+  ContainerRestartResponse,
   ContainerRebuildResponse,
+  ContainerAvailabilityResponse,
 } from "@getpaseo/protocol/messages";
 import { isRelayClientWebSocketUrl } from "@getpaseo/protocol/daemon-endpoints";
 import { terminalSubscriptionKey } from "@getpaseo/protocol/terminal-subscription-key";
@@ -3973,6 +3974,7 @@ export class DaemonClient {
       source: WorkspaceCreateRequest["source"];
       title?: string;
       firstAgentContext?: WorkspaceCreateRequest["firstAgentContext"];
+      containerBackend?: "host" | "devcontainer";
     },
     requestId?: string,
   ): Promise<WorkspaceCreatePayload> {
@@ -3984,6 +3986,9 @@ export class DaemonClient {
         ...(input.title !== undefined ? { title: input.title } : {}),
         ...(input.firstAgentContext !== undefined
           ? { firstAgentContext: input.firstAgentContext }
+          : {}),
+        ...(input.containerBackend !== undefined
+          ? { containerBackend: input.containerBackend }
           : {}),
       },
       responseType: "workspace.create.response",
@@ -5219,20 +5224,17 @@ export class DaemonClient {
   // ============================================================================
   // Container Management
   // ============================================================================
-
-  async approveContainer(
+  async restartContainer(
     workspaceId: string,
-    approved: boolean,
     requestId?: string,
-  ): Promise<ContainerApproveResponse["payload"]> {
+  ): Promise<ContainerRestartResponse["payload"]> {
     return this.sendCorrelatedSessionRequest({
       requestId,
       message: {
-        type: "container.approve.request",
+        type: "container.restart.request",
         workspaceId,
-        approved,
       },
-      responseType: "container.approve.response",
+      responseType: "container.restart.response",
     });
   }
 
@@ -5250,20 +5252,24 @@ export class DaemonClient {
     });
   }
 
+  async checkContainerAvailability(
+    cwd: string,
+    requestId?: string,
+  ): Promise<ContainerAvailabilityResponse["payload"]> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "container.availability.request",
+        cwd,
+      },
+      responseType: "container.availability.response",
+    });
+  }
+
   onContainerConfigChanged(handler: (workspaceId: string) => void): () => void {
     return this.on("container.config_changed", (message) => {
       if (message.type === "container.config_changed") {
         handler(message.payload.workspaceId);
-      }
-    });
-  }
-
-  onContainerApprovalRequired(
-    handler: (workspaceId: string, configPath: string) => void,
-  ): () => void {
-    return this.on("container.approval_required", (message) => {
-      if (message.type === "container.approval_required") {
-        handler(message.payload.workspaceId, message.payload.configPath);
       }
     });
   }

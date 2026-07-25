@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Image, Text, View } from "react-native";
+import { Image, Pressable, Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { createNameId } from "mnemonic-id";
@@ -29,7 +29,7 @@ import { requireWorkspaceDirectory } from "@/utils/workspace-directory";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import type { MessagePayload } from "@/composer/types";
-import { ContainerApprovalBanner } from "@/components/container-approval-banner";
+import { ContainerConfigChangedBanner } from "@/components/container-config-changed-banner";
 
 function toProjectIconDataUri(icon: { mimeType: string; data: string } | null): string | null {
   if (!icon) {
@@ -90,7 +90,7 @@ async function callWorkspaceCreation({
 }: {
   creationMethod: "create_worktree" | "open_project";
   connectedClient: DaemonClient;
-  input: { cwd: string };
+  input: { cwd: string; containerBackend: "host" | "devcontainer" };
 }) {
   if (creationMethod === "create_worktree") {
     return connectedClient.createPaseoWorktree({
@@ -100,6 +100,7 @@ async function callWorkspaceCreation({
   }
   return connectedClient.createWorkspace({
     source: { kind: "directory", path: input.cwd },
+    containerBackend: input.containerBackend,
   });
 }
 
@@ -158,6 +159,98 @@ function buildCreateAgentOptions({
   };
 }
 
+function useContainerBackendAvailability(
+  client: ReturnType<typeof useHostRuntimeClient>,
+  sourceDirectory: string,
+): {
+  containerBackend: "host" | "devcontainer";
+  setContainerBackend: (value: "host" | "devcontainer") => void;
+  containerAvailability: { dockerAvailable: boolean; hasDevContainerConfig: boolean } | null;
+} {
+  const [containerBackend, setContainerBackend] = useState<"host" | "devcontainer">("host");
+  const [containerAvailability, setContainerAvailability] = useState<{
+    dockerAvailable: boolean;
+    hasDevContainerConfig: boolean;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!client || !sourceDirectory) {
+      setContainerAvailability(null);
+      setContainerBackend("host");
+      return;
+    }
+    let cancelled = false;
+    client
+      .checkContainerAvailability(sourceDirectory)
+      .then((result) => {
+        if (cancelled) return;
+        setContainerAvailability({
+          dockerAvailable: result.dockerAvailable,
+          hasDevContainerConfig: result.hasDevContainerConfig,
+        });
+        if (result.dockerAvailable && result.hasDevContainerConfig) {
+          setContainerBackend("devcontainer");
+        }
+        return undefined;
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setContainerAvailability(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [client, sourceDirectory]);
+
+  return { containerBackend, setContainerBackend, containerAvailability };
+}
+
+function ContainerBackendSelector({
+  value,
+  dockerAvailable,
+  onChange,
+}: {
+  value: "host" | "devcontainer";
+  dockerAvailable: boolean;
+  onChange: (value: "host" | "devcontainer") => void;
+}) {
+  const { t } = useTranslation();
+  const selectHost = useCallback(() => onChange("host"), [onChange]);
+  const selectDevcontainer = useCallback(() => onChange("devcontainer"), [onChange]);
+  return (
+    <View style={styles.backendSelector}>
+      <Text style={styles.backendLabel}>{t("workspaceSetup.containerBackend.label")}</Text>
+      <View style={styles.backendOptions}>
+        <Pressable
+          style={[styles.backendOption, value === "host" && styles.backendOptionSelected]}
+          onPress={selectHost}
+        >
+          <Text style={styles.backendOptionText}>{t("workspaceSetup.containerBackend.host")}</Text>
+        </Pressable>
+        <Pressable
+          style={[
+            styles.backendOption,
+            value === "devcontainer" && styles.backendOptionSelected,
+            !dockerAvailable && styles.backendOptionDisabled,
+          ]}
+          disabled={!dockerAvailable}
+          onPress={selectDevcontainer}
+        >
+          <Text style={styles.backendOptionText}>
+            {t("workspaceSetup.containerBackend.devcontainer")}
+          </Text>
+        </Pressable>
+      </View>
+      {!dockerAvailable ? (
+        <Text style={styles.backendHint}>
+          {t("workspaceSetup.containerBackend.dockerUnavailable")}
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
+// oxlint-disable-next-line eslint(complexity): dialog has many UI states
 export function WorkspaceSetupDialog() {
   const { t } = useTranslation();
   const toast = useToast();
@@ -181,6 +274,8 @@ export function WorkspaceSetupDialog() {
   const workspace = createdWorkspace;
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
+  const { containerBackend, setContainerBackend, containerAvailability } =
+    useContainerBackendAvailability(client, sourceDirectory);
   const chatDraft = useAgentInputDraft({
     draftKey: `workspace-setup:${serverId}:${sourceDirectory}`,
     composer: buildChatDraftComposerArgs({
@@ -260,7 +355,7 @@ export function WorkspaceSetupDialog() {
       const payload = await callWorkspaceCreation({
         creationMethod: pendingWorkspaceSetup.creationMethod,
         connectedClient,
-        input,
+        input: { cwd: input.cwd, containerBackend },
       });
 
       if (payload.error || !payload.workspace) {
@@ -278,6 +373,7 @@ export function WorkspaceSetupDialog() {
       return normalizedWorkspace;
     },
     [
+      containerBackend,
       createdWorkspace,
       mergeWorkspaces,
       pendingWorkspaceSetup,
@@ -450,7 +546,14 @@ export function WorkspaceSetupDialog() {
         />
       </FileDropZone>
       {createdWorkspace ? (
-        <ContainerApprovalBanner serverId={serverId} workspaceId={createdWorkspace.id} />
+        <ContainerConfigChangedBanner serverId={serverId} workspaceId={createdWorkspace.id} />
+      ) : null}
+      {containerAvailability?.hasDevContainerConfig ? (
+        <ContainerBackendSelector
+          value={containerBackend}
+          dockerAvailable={containerAvailability.dockerAvailable}
+          onChange={setContainerBackend}
+        />
       ) : null}
       {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
     </AdaptiveModalSheet>
@@ -497,5 +600,40 @@ const styles = StyleSheet.create((theme) => ({
   },
   composerInputWrapper: {
     backgroundColor: theme.colors.surface2,
+  },
+  backendSelector: {
+    gap: theme.spacing[1],
+  },
+  backendLabel: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foregroundMuted,
+  },
+  backendOptions: {
+    flexDirection: "row",
+    gap: theme.spacing[2],
+  },
+  backendOption: {
+    flex: 1,
+    paddingVertical: theme.spacing[2],
+    paddingHorizontal: theme.spacing[3],
+    borderRadius: theme.borderRadius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    alignItems: "center",
+  },
+  backendOptionSelected: {
+    borderColor: theme.colors.foreground,
+    backgroundColor: theme.colors.surface2,
+  },
+  backendOptionDisabled: {
+    opacity: 0.5,
+  },
+  backendOptionText: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foreground,
+  },
+  backendHint: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foregroundMuted,
   },
 }));

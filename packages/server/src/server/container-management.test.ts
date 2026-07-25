@@ -68,6 +68,12 @@ function createMockContainerBackend(
       handles.set(resolved, HANDLE);
       return HANDLE;
     },
+    async restart(opts: ContainerUpOptions) {
+      const resolved = path.resolve(opts.workspaceFolder);
+      handles.delete(resolved);
+      handles.set(resolved, HANDLE);
+      return HANDLE;
+    },
     async rebuild(opts: ContainerUpOptions) {
       const resolved = path.resolve(opts.workspaceFolder);
       handles.delete(resolved);
@@ -237,72 +243,21 @@ function makeDevcontainerDir(): string {
   return dir;
 }
 
+// Advance the microtask queue enough for the fire-and-forget IIFE inside
+// maybeStartContainerForWorkspace to progress past its awaited availability /
+// already-running checks and register a pending activation. Deterministic —
+// no real timers.
+async function flushMicrotasks(): Promise<void> {
+  for (let i = 0; i < 5; i++) {
+    await Promise.resolve();
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
-test("describeWorkspaceRecord emits container.approval_required when config exists and approval is pending", async () => {
-  const cwd = makeDevcontainerDir();
-  const emitted: SessionOutboundMessage[] = [];
-  const backend = createMockContainerBackend({
-    hasConfig: () => true,
-    isAvailable: async () => true,
-    isAlreadyRunning: async () => false,
-  });
-
-  const session = createContainerTestSession({
-    backend,
-    workspaces: [makeWorkspace({ cwd, containerApproval: "pending" })],
-    emitted,
-  });
-
-  // Access the private method via the test internals
-  const internals = asSessionInternals<{
-    describeWorkspaceRecord: (workspace: PersistedWorkspaceRecord) => Promise<unknown>;
-  }>(session);
-
-  const workspace = makeWorkspace({ cwd, containerApproval: "pending" });
-  await internals.describeWorkspaceRecord(workspace);
-
-  // Give the async IIFE time to run
-  await new Promise((r) => setTimeout(r, 100));
-
-  const approvalMsg = emitted.find((m) => m.type === "container.approval_required");
-  expect(approvalMsg).toBeDefined();
-  if (approvalMsg && approvalMsg.type === "container.approval_required") {
-    expect(approvalMsg.payload.workspaceId).toBe("ws-test");
-  }
-});
-
-test("describeWorkspaceRecord does not emit approval_required when approval is denied", async () => {
-  const cwd = makeDevcontainerDir();
-  const emitted: SessionOutboundMessage[] = [];
-  const backend = createMockContainerBackend({
-    hasConfig: () => true,
-    isAvailable: async () => true,
-    isAlreadyRunning: async () => false,
-  });
-
-  const session = createContainerTestSession({
-    backend,
-    workspaces: [makeWorkspace({ cwd, containerApproval: "denied" })],
-    emitted,
-  });
-
-  const internals = asSessionInternals<{
-    describeWorkspaceRecord: (workspace: PersistedWorkspaceRecord) => Promise<unknown>;
-  }>(session);
-
-  const workspace = makeWorkspace({ cwd, containerApproval: "denied" });
-  await internals.describeWorkspaceRecord(workspace);
-
-  await new Promise((r) => setTimeout(r, 100));
-
-  const approvalMsg = emitted.find((m) => m.type === "container.approval_required");
-  expect(approvalMsg).toBeUndefined();
-});
-
-test("describeWorkspaceRecord starts container when approval is already approved", async () => {
+test("describeWorkspaceRecord starts container directly when containerBackend is devcontainer", async () => {
   const cwd = makeDevcontainerDir();
   const emitted: SessionOutboundMessage[] = [];
   const upSpy = vi.fn(async () => HANDLE);
@@ -315,7 +270,7 @@ test("describeWorkspaceRecord starts container when approval is already approved
 
   const session = createContainerTestSession({
     backend,
-    workspaces: [makeWorkspace({ cwd, containerApproval: "approved" })],
+    workspaces: [makeWorkspace({ cwd, containerBackend: "devcontainer" })],
     emitted,
   });
 
@@ -323,14 +278,39 @@ test("describeWorkspaceRecord starts container when approval is already approved
     describeWorkspaceRecord: (workspace: PersistedWorkspaceRecord) => Promise<unknown>;
   }>(session);
 
-  const workspace = makeWorkspace({ cwd, containerApproval: "approved" });
+  const workspace = makeWorkspace({ cwd, containerBackend: "devcontainer" });
+  // describeWorkspaceRecord awaits maybeStartContainerForWorkspace, which awaits
+  // the IIFE to completion — so up has been called by the time this resolves.
   await internals.describeWorkspaceRecord(workspace);
 
-  await new Promise((r) => setTimeout(r, 100));
-
   expect(upSpy).toHaveBeenCalledWith(expect.objectContaining({ workspaceFolder: cwd }));
-  const approvalMsg = emitted.find((m) => m.type === "container.approval_required");
-  expect(approvalMsg).toBeUndefined();
+});
+
+test("describeWorkspaceRecord does not start container when containerBackend is host", async () => {
+  const cwd = makeDevcontainerDir();
+  const emitted: SessionOutboundMessage[] = [];
+  const upSpy = vi.fn(async () => HANDLE);
+  const backend = createMockContainerBackend({
+    hasConfig: () => true,
+    isAvailable: async () => true,
+    isAlreadyRunning: async () => false,
+  });
+  backend.up = upSpy;
+
+  const session = createContainerTestSession({
+    backend,
+    workspaces: [makeWorkspace({ cwd, containerBackend: "host" })],
+    emitted,
+  });
+
+  const internals = asSessionInternals<{
+    describeWorkspaceRecord: (workspace: PersistedWorkspaceRecord) => Promise<unknown>;
+  }>(session);
+
+  const workspace = makeWorkspace({ cwd, containerBackend: "host" });
+  await internals.describeWorkspaceRecord(workspace);
+
+  expect(upSpy).not.toHaveBeenCalled();
 });
 
 test("describeWorkspaceRecord reuses existing container when isAlreadyRunning returns true", async () => {
@@ -346,7 +326,7 @@ test("describeWorkspaceRecord reuses existing container when isAlreadyRunning re
 
   const session = createContainerTestSession({
     backend,
-    workspaces: [makeWorkspace({ cwd, containerApproval: "approved" })],
+    workspaces: [makeWorkspace({ cwd, containerBackend: "devcontainer" })],
     emitted,
   });
 
@@ -354,14 +334,10 @@ test("describeWorkspaceRecord reuses existing container when isAlreadyRunning re
     describeWorkspaceRecord: (workspace: PersistedWorkspaceRecord) => Promise<unknown>;
   }>(session);
 
-  const workspace = makeWorkspace({ cwd, containerApproval: "approved" });
+  const workspace = makeWorkspace({ cwd, containerBackend: "devcontainer" });
   await internals.describeWorkspaceRecord(workspace);
 
-  await new Promise((r) => setTimeout(r, 100));
-
   expect(upSpy).toHaveBeenCalled();
-  const approvalMsg = emitted.find((m) => m.type === "container.approval_required");
-  expect(approvalMsg).toBeUndefined();
 });
 
 test("describeWorkspaceRecord does not trigger container flow when no devcontainer.json exists", async () => {
@@ -377,7 +353,7 @@ test("describeWorkspaceRecord does not trigger container flow when no devcontain
 
   const session = createContainerTestSession({
     backend,
-    workspaces: [makeWorkspace({ cwd, containerApproval: "pending" })],
+    workspaces: [makeWorkspace({ cwd, containerBackend: "devcontainer" })],
     emitted,
   });
 
@@ -385,17 +361,13 @@ test("describeWorkspaceRecord does not trigger container flow when no devcontain
     describeWorkspaceRecord: (workspace: PersistedWorkspaceRecord) => Promise<unknown>;
   }>(session);
 
-  const workspace = makeWorkspace({ cwd, containerApproval: "pending" });
+  const workspace = makeWorkspace({ cwd, containerBackend: "devcontainer" });
   await internals.describeWorkspaceRecord(workspace);
 
-  await new Promise((r) => setTimeout(r, 100));
-
   expect(upSpy).not.toHaveBeenCalled();
-  const approvalMsg = emitted.find((m) => m.type === "container.approval_required");
-  expect(approvalMsg).toBeUndefined();
 });
 
-test("describeWorkspaceRecord includes containerStatus when container is running", async () => {
+test("describeWorkspaceRecord includes containerStatus running when container is running", async () => {
   const cwd = makeDevcontainerDir();
   const emitted: SessionOutboundMessage[] = [];
   const backend = createMockContainerBackend({
@@ -406,7 +378,7 @@ test("describeWorkspaceRecord includes containerStatus when container is running
 
   const session = createContainerTestSession({
     backend,
-    workspaces: [makeWorkspace({ cwd, containerApproval: "approved" })],
+    workspaces: [makeWorkspace({ cwd, containerBackend: "devcontainer" })],
     emitted,
   });
 
@@ -417,46 +389,59 @@ test("describeWorkspaceRecord includes containerStatus when container is running
     }>;
   }>(session);
 
-  const workspace = makeWorkspace({ cwd, containerApproval: "approved" });
+  const workspace = makeWorkspace({ cwd, containerBackend: "devcontainer" });
   const descriptor = await internals.describeWorkspaceRecord(workspace);
-
-  await new Promise((r) => setTimeout(r, 100));
 
   expect(descriptor.containerStatus).toBe("running");
   expect(descriptor.hasDevContainerConfig).toBe(true);
 });
 
-test("describeWorkspaceRecord includes containerStatus starting when approval is pending", async () => {
+test("describeWorkspaceRecord includes containerStatus starting while container is starting", async () => {
   const cwd = makeDevcontainerDir();
   const emitted: SessionOutboundMessage[] = [];
+  // Block backend.up so the IIFE registers a pending activation and stalls —
+  // this is the window where containerStatus is "starting".
+  const { promise: upPromise, resolve: resolveUp } = Promise.withResolvers<ExecutionHandle>();
   const backend = createMockContainerBackend({
     hasConfig: () => true,
     isAvailable: async () => true,
     isAlreadyRunning: async () => false,
   });
+  backend.up = vi.fn(() => upPromise);
 
   const session = createContainerTestSession({
     backend,
-    workspaces: [makeWorkspace({ cwd, containerApproval: "pending" })],
+    workspaces: [makeWorkspace({ cwd, containerBackend: "devcontainer" })],
     emitted,
   });
 
   const internals = asSessionInternals<{
+    maybeStartContainerForWorkspace: (workspace: PersistedWorkspaceRecord) => Promise<void>;
     describeWorkspaceRecord: (workspace: PersistedWorkspaceRecord) => Promise<{
       containerStatus?: string;
       hasDevContainerConfig?: boolean;
     }>;
   }>(session);
 
-  const workspace = makeWorkspace({ cwd, containerApproval: "pending" });
-  const descriptor = await internals.describeWorkspaceRecord(workspace);
+  const workspace = makeWorkspace({ cwd, containerBackend: "devcontainer" });
+  // Kick off the container start without awaiting — the IIFE registers a
+  // pending activation then blocks on the controlled up promise.
+  const startPromise = internals.maybeStartContainerForWorkspace(workspace);
+  await flushMicrotasks();
 
-  // The pending activation should be registered, so containerStatus should be "starting"
+  // A second describeWorkspaceRecord sees the pending activation (the first
+  // call's maybeStartContainerForWorkspace returns early) and reports "starting"
+  // without blocking.
+  const descriptor = await internals.describeWorkspaceRecord(workspace);
   expect(descriptor.containerStatus).toBe("starting");
   expect(descriptor.hasDevContainerConfig).toBe(true);
+
+  // Complete the container start and let the IIFE finish.
+  resolveUp(HANDLE);
+  await startPromise;
 });
 
-test("denied workspace does not get container even if another workspace with same cwd is approved", async () => {
+test("host backend does not get container even if another workspace with same cwd is devcontainer", async () => {
   const cwd = makeDevcontainerDir();
   const emitted: SessionOutboundMessage[] = [];
   const backend = createMockContainerBackend({
@@ -468,8 +453,8 @@ test("denied workspace does not get container even if another workspace with sam
   const session = createContainerTestSession({
     backend,
     workspaces: [
-      makeWorkspace({ workspaceId: "ws-approved", cwd, containerApproval: "approved" }),
-      makeWorkspace({ workspaceId: "ws-denied", cwd, containerApproval: "denied" }),
+      makeWorkspace({ workspaceId: "ws-dev", cwd, containerBackend: "devcontainer" }),
+      makeWorkspace({ workspaceId: "ws-host", cwd, containerBackend: "host" }),
     ],
     emitted,
   });
@@ -480,20 +465,171 @@ test("denied workspace does not get container even if another workspace with sam
     }>;
   }>(session);
 
-  // First, approve and start the container
-  const approvedWs = makeWorkspace({
-    workspaceId: "ws-approved",
+  // First, start the container for the devcontainer workspace
+  const devWs = makeWorkspace({
+    workspaceId: "ws-dev",
     cwd,
-    containerApproval: "approved",
+    containerBackend: "devcontainer",
   });
-  await internals.describeWorkspaceRecord(approvedWs);
-  await new Promise((r) => setTimeout(r, 100));
+  await internals.describeWorkspaceRecord(devWs);
 
-  // Now describe the denied workspace — it should not have containerStatus
-  const deniedWs = makeWorkspace({ workspaceId: "ws-denied", cwd, containerApproval: "denied" });
-  const deniedDescriptor = await internals.describeWorkspaceRecord(deniedWs);
+  // Now describe the host workspace — it should not have containerStatus
+  const hostWs = makeWorkspace({ workspaceId: "ws-host", cwd, containerBackend: "host" });
+  const hostDescriptor = await internals.describeWorkspaceRecord(hostWs);
 
-  expect(deniedDescriptor.containerStatus).toBeUndefined();
+  expect(hostDescriptor.containerStatus).toBeUndefined();
+});
+
+test("container.restart.request stops and restarts the container", async () => {
+  const cwd = makeDevcontainerDir();
+  const emitted: SessionOutboundMessage[] = [];
+  const restartSpy = vi.fn(async () => HANDLE);
+  const backend = createMockContainerBackend({
+    hasConfig: () => true,
+    isAvailable: async () => true,
+    isAlreadyRunning: async () => false,
+  });
+  backend.restart = restartSpy;
+
+  const session = createContainerTestSession({
+    backend,
+    workspaces: [makeWorkspace({ cwd, containerBackend: "devcontainer" })],
+    emitted,
+  });
+
+  const internals = asSessionInternals<{
+    handleContainerRestartRequest: (msg: {
+      type: "container.restart.request";
+      workspaceId: string;
+      requestId: string;
+    }) => Promise<void>;
+  }>(session);
+
+  await internals.handleContainerRestartRequest({
+    type: "container.restart.request",
+    workspaceId: "ws-test",
+    requestId: "req-1",
+  });
+
+  expect(restartSpy).toHaveBeenCalledWith(expect.objectContaining({ workspaceFolder: cwd }));
+  const response = emitted.find((m) => m.type === "container.restart.response");
+  expect(response).toBeDefined();
+  if (response && response.type === "container.restart.response") {
+    expect(response.payload.containerStatus).toBe("running");
+    expect(response.payload.error).toBeNull();
+  }
+});
+
+test("container.restart.request returns error when workspace is not found", async () => {
+  const cwd = makeDevcontainerDir();
+  const emitted: SessionOutboundMessage[] = [];
+  const restartSpy = vi.fn(async () => HANDLE);
+  const backend = createMockContainerBackend({
+    hasConfig: () => true,
+    isAvailable: async () => true,
+    isAlreadyRunning: async () => false,
+  });
+  backend.restart = restartSpy;
+
+  const session = createContainerTestSession({
+    backend,
+    workspaces: [makeWorkspace({ cwd, containerBackend: "devcontainer" })],
+    emitted,
+  });
+
+  const internals = asSessionInternals<{
+    handleContainerRestartRequest: (msg: {
+      type: "container.restart.request";
+      workspaceId: string;
+      requestId: string;
+    }) => Promise<void>;
+  }>(session);
+
+  await internals.handleContainerRestartRequest({
+    type: "container.restart.request",
+    workspaceId: "ws-missing",
+    requestId: "req-1",
+  });
+
+  expect(restartSpy).not.toHaveBeenCalled();
+  const response = emitted.find((m) => m.type === "container.restart.response");
+  expect(response).toBeDefined();
+  if (response && response.type === "container.restart.response") {
+    expect(response.payload.containerStatus).toBeNull();
+    expect(response.payload.error).toBe("Workspace not found");
+  }
+});
+
+test("container.availability.request returns docker availability and config detection", async () => {
+  const cwd = makeDevcontainerDir();
+  const emitted: SessionOutboundMessage[] = [];
+  const backend = createMockContainerBackend({
+    hasConfig: () => true,
+    isAvailable: async () => true,
+  });
+
+  const session = createContainerTestSession({
+    backend,
+    workspaces: [makeWorkspace({ cwd, containerBackend: "devcontainer" })],
+    emitted,
+  });
+
+  const internals = asSessionInternals<{
+    handleContainerAvailabilityRequest: (msg: {
+      type: "container.availability.request";
+      cwd: string;
+      requestId: string;
+    }) => Promise<void>;
+  }>(session);
+
+  await internals.handleContainerAvailabilityRequest({
+    type: "container.availability.request",
+    cwd,
+    requestId: "req-1",
+  });
+
+  const response = emitted.find((m) => m.type === "container.availability.response");
+  expect(response).toBeDefined();
+  if (response && response.type === "container.availability.response") {
+    expect(response.payload.dockerAvailable).toBe(true);
+    expect(response.payload.hasDevContainerConfig).toBe(true);
+  }
+});
+
+test("container.availability.request returns false when docker unavailable and no config", async () => {
+  const cwd = mkdtempSync(path.join(tmpdir(), "paseo-nocontainer-"));
+  const emitted: SessionOutboundMessage[] = [];
+  const backend = createMockContainerBackend({
+    hasConfig: () => false,
+    isAvailable: async () => false,
+  });
+
+  const session = createContainerTestSession({
+    backend,
+    workspaces: [makeWorkspace({ cwd, containerBackend: "host" })],
+    emitted,
+  });
+
+  const internals = asSessionInternals<{
+    handleContainerAvailabilityRequest: (msg: {
+      type: "container.availability.request";
+      cwd: string;
+      requestId: string;
+    }) => Promise<void>;
+  }>(session);
+
+  await internals.handleContainerAvailabilityRequest({
+    type: "container.availability.request",
+    cwd,
+    requestId: "req-1",
+  });
+
+  const response = emitted.find((m) => m.type === "container.availability.response");
+  expect(response).toBeDefined();
+  if (response && response.type === "container.availability.response") {
+    expect(response.payload.dockerAvailable).toBe(false);
+    expect(response.payload.hasDevContainerConfig).toBe(false);
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -544,7 +680,7 @@ dockerTest(
 );
 
 dockerTest(
-  "real backend: describeWorkspaceRecord emits approval_required for pending workspace",
+  "real backend: container starts and containerStatus is running for devcontainer backend",
   async () => {
     const cwd = mkdtempSync(path.join(tmpdir(), "paseo-devcontainer-real-"));
     writeFileSync(path.join(cwd, ".devcontainer.json"), '{"image":"alpine:latest"}');
@@ -555,48 +691,7 @@ dockerTest(
 
     const session = createContainerTestSession({
       backend,
-      workspaces: [makeWorkspace({ cwd, containerApproval: "pending" })],
-      emitted,
-    });
-
-    const internals = asSessionInternals<{
-      describeWorkspaceRecord: (workspace: PersistedWorkspaceRecord) => Promise<{
-        containerStatus?: string;
-        hasDevContainerConfig?: boolean;
-      }>;
-    }>(session);
-
-    const workspace = makeWorkspace({ cwd, containerApproval: "pending" });
-    // describeWorkspaceRecord awaits maybeStartContainerForWorkspace, which runs
-    // the IIFE to completion (isAvailable cached + isAlreadyRunning via docker ps).
-    // After it resolves, the pending activation is registered and
-    // container.approval_required has been emitted synchronously.
-    const descriptor = await internals.describeWorkspaceRecord(workspace);
-
-    expect(descriptor.containerStatus).toBe("starting");
-    expect(descriptor.hasDevContainerConfig).toBe(true);
-
-    const approvalMsg = emitted.find((m) => m.type === "container.approval_required");
-    expect(approvalMsg).toBeDefined();
-
-    await backend.stop(cwd).catch(() => {});
-  },
-  30_000,
-);
-
-dockerTest(
-  "real backend: container starts and containerStatus is running when approval is approved",
-  async () => {
-    const cwd = mkdtempSync(path.join(tmpdir(), "paseo-devcontainer-real-"));
-    writeFileSync(path.join(cwd, ".devcontainer.json"), '{"image":"alpine:latest"}');
-    const emitted: SessionOutboundMessage[] = [];
-    const backend = createDevContainerBackend({ logger: createTestLogger() });
-
-    expect(await backend.isAvailable()).toBe(true);
-
-    const session = createContainerTestSession({
-      backend,
-      workspaces: [makeWorkspace({ cwd, containerApproval: "approved" })],
+      workspaces: [makeWorkspace({ cwd, containerBackend: "devcontainer" })],
       emitted,
     });
 
@@ -606,10 +701,11 @@ dockerTest(
       }>;
     }>(session);
 
-    const workspace = makeWorkspace({ cwd, containerApproval: "approved" });
+    const workspace = makeWorkspace({ cwd, containerBackend: "devcontainer" });
     // describeWorkspaceRecord awaits maybeStartContainerForWorkspace, which runs
     // `devcontainer up` (pulling alpine:latest + starting the container). This
-    // can take 30+ seconds on first pull.
+    // can take 30+ seconds on first pull. No approval prompt — the container
+    // starts directly.
     const descriptor = await internals.describeWorkspaceRecord(workspace);
 
     expect(descriptor.containerStatus).toBe("running");

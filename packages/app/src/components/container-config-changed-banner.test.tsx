@@ -72,12 +72,8 @@ vi.mock("@/components/ui/button", async () => {
   };
 });
 
-import { ContainerApprovalBanner } from "@/components/container-approval-banner";
-import {
-  useSessionStore,
-  normalizeWorkspaceDescriptor,
-  type WorkspaceDescriptor,
-} from "@/stores/session-store";
+import { ContainerConfigChangedBanner } from "@/components/container-config-changed-banner";
+import { useSessionStore, normalizeWorkspaceDescriptor } from "@/stores/session-store";
 import { getHostRuntimeStore, type HostRuntimeController } from "@/runtime/host-runtime";
 import type { HostProfile } from "@/types/host-connection";
 
@@ -85,20 +81,12 @@ const SERVER_ID = "test-server";
 const WORKSPACE_ID = "ws-test";
 
 // ---------------------------------------------------------------------------
-// Mock DaemonClient with container event handlers
+// Mock DaemonClient
 // ---------------------------------------------------------------------------
 
 function createMockClient(): DaemonClient {
-  const approvalHandlers: Array<(wsId: string) => void> = [];
   const configHandlers: Array<(wsId: string) => void> = [];
   return {
-    onContainerApprovalRequired: vi.fn((handler: (wsId: string) => void) => {
-      approvalHandlers.push(handler);
-      return () => {
-        const idx = approvalHandlers.indexOf(handler);
-        if (idx >= 0) approvalHandlers.splice(idx, 1);
-      };
-    }),
     onContainerConfigChanged: vi.fn((handler: (wsId: string) => void) => {
       configHandlers.push(handler);
       return () => {
@@ -106,16 +94,11 @@ function createMockClient(): DaemonClient {
         if (idx >= 0) configHandlers.splice(idx, 1);
       };
     }),
-    approveContainer: vi.fn().mockResolvedValue(undefined),
     rebuildContainer: vi.fn().mockResolvedValue(undefined),
-    fireApprovalRequired: (wsId: string) => {
-      for (const h of approvalHandlers) h(wsId);
-    },
     fireConfigChanged: (wsId: string) => {
       for (const h of configHandlers) h(wsId);
     },
   } as unknown as DaemonClient & {
-    fireApprovalRequired: (wsId: string) => void;
     fireConfigChanged: (wsId: string) => void;
   };
 }
@@ -162,34 +145,6 @@ function setClient(client: DaemonClient | null): void {
   controller.updateSnapshot({ client });
 }
 
-function makeWorkspace(overrides: Partial<WorkspaceDescriptor> = {}): WorkspaceDescriptor {
-  return {
-    id: WORKSPACE_ID,
-    projectId: "prj-test",
-    projectDisplayName: "Test Project",
-    projectCustomName: null,
-    projectRootPath: "/test",
-    workspaceDirectory: "/test",
-    projectKind: "non_git",
-    workspaceKind: "local_checkout",
-    name: "main",
-    title: null,
-    pinnedAt: null,
-    status: "done",
-    statusEnteredAt: null,
-    archivingAt: null,
-    diffStat: null,
-    scripts: [],
-    ...overrides,
-  };
-}
-
-function setWorkspace(workspace: WorkspaceDescriptor): void {
-  act(() => {
-    useSessionStore.getState().setWorkspaces(SERVER_ID, new Map([[workspace.id, workspace]]));
-  });
-}
-
 // ---------------------------------------------------------------------------
 // Render helper
 // ---------------------------------------------------------------------------
@@ -212,7 +167,7 @@ async function renderBanner(props: {
   dom.window.document.body.appendChild(container);
   const root = createRoot(container);
   await act(async () => {
-    root.render(React.createElement(ContainerApprovalBanner, props));
+    root.render(React.createElement(ContainerConfigChangedBanner, props));
   });
   return { root, container };
 }
@@ -233,127 +188,77 @@ afterEach(() => {
   dom = null;
 });
 
-describe("ContainerApprovalBanner", () => {
-  it("shows approve/deny buttons when containerStatus is 'starting' from store", async () => {
+describe("ContainerConfigChangedBanner", () => {
+  it("shows rebuild button when container.config_changed event fires", async () => {
     const client = createMockClient();
     setClient(client);
-    setWorkspace(makeWorkspace({ containerStatus: "starting" }));
 
     const { container } = await renderBanner({
       serverId: SERVER_ID,
       workspaceId: WORKSPACE_ID,
     });
 
-    expect(container.textContent).toContain("workspace.header.container.approvalTitle");
-    expect(container.textContent).toContain("workspace.header.container.approve");
-    expect(container.textContent).toContain("workspace.header.container.deny");
-  });
-
-  it("shows approve/deny buttons when container.approval_required event fires", async () => {
-    const client = createMockClient();
-    setClient(client);
-    setWorkspace(makeWorkspace());
-
-    const { container } = await renderBanner({
-      serverId: SERVER_ID,
-      workspaceId: WORKSPACE_ID,
-    });
-
-    expect(container.textContent).not.toContain("approvalTitle");
+    expect(container.textContent).not.toContain("configChangedTitle");
 
     const mockClient = client as unknown as {
-      fireApprovalRequired: (wsId: string) => void;
+      fireConfigChanged: (wsId: string) => void;
     };
     await act(async () => {
-      mockClient.fireApprovalRequired(WORKSPACE_ID);
+      mockClient.fireConfigChanged(WORKSPACE_ID);
     });
 
-    expect(container.textContent).toContain("workspace.header.container.approvalTitle");
-    expect(container.textContent).toContain("workspace.header.container.approve");
+    expect(container.textContent).toContain("workspace.header.container.configChangedTitle");
+    expect(container.textContent).toContain("workspace.header.container.rebuildAction");
   });
 
-  it("does not show approval prompt when containerStatus is 'running'", async () => {
+  it("does not show banner when config_changed fires for a different workspace", async () => {
     const client = createMockClient();
     setClient(client);
-    setWorkspace(makeWorkspace({ containerStatus: "running" }));
 
     const { container } = await renderBanner({
       serverId: SERVER_ID,
       workspaceId: WORKSPACE_ID,
     });
 
-    expect(container.textContent).not.toContain("approvalTitle");
-  });
-
-  it("does not show approval prompt when no containerStatus and no event", async () => {
-    const client = createMockClient();
-    setClient(client);
-    setWorkspace(makeWorkspace());
-
-    const { container } = await renderBanner({
-      serverId: SERVER_ID,
-      workspaceId: WORKSPACE_ID,
-    });
-
-    expect(container.textContent).not.toContain("approvalTitle");
-  });
-
-  it("does not show approval prompt for a different workspaceId", async () => {
-    const client = createMockClient();
-    setClient(client);
-    setWorkspace(makeWorkspace({ containerStatus: "starting" }));
-
-    const { container } = await renderBanner({
-      serverId: SERVER_ID,
-      workspaceId: "ws-different",
-    });
-
-    expect(container.textContent).not.toContain("approvalTitle");
-  });
-
-  it("calls approveContainer when approve button is clicked", async () => {
-    const client = createMockClient();
-    setClient(client);
-    setWorkspace(makeWorkspace({ containerStatus: "starting" }));
-
-    const { container } = await renderBanner({
-      serverId: SERVER_ID,
-      workspaceId: WORKSPACE_ID,
-    });
-
-    const approveButton = container.querySelector(
-      '[data-testid="container-approve"]',
-    ) as HTMLElement | null;
-    expect(approveButton).not.toBeNull();
+    const mockClient = client as unknown as {
+      fireConfigChanged: (wsId: string) => void;
+    };
     await act(async () => {
-      approveButton?.click();
+      mockClient.fireConfigChanged("ws-different");
     });
-    expect(client.approveContainer).toHaveBeenCalledWith(WORKSPACE_ID, true);
+
+    expect(container.textContent).not.toContain("configChangedTitle");
   });
 
-  it("calls approveContainer with false when deny button is clicked", async () => {
+  it("calls rebuildContainer when rebuild button is clicked", async () => {
     const client = createMockClient();
     setClient(client);
-    setWorkspace(makeWorkspace({ containerStatus: "starting" }));
 
     const { container } = await renderBanner({
       serverId: SERVER_ID,
       workspaceId: WORKSPACE_ID,
     });
 
-    const denyButton = container.querySelector(
-      '[data-testid="container-deny"]',
-    ) as HTMLElement | null;
-    expect(denyButton).not.toBeNull();
+    const mockClient = client as unknown as {
+      fireConfigChanged: (wsId: string) => void;
+    };
     await act(async () => {
-      denyButton?.click();
+      mockClient.fireConfigChanged(WORKSPACE_ID);
     });
-    expect(client.approveContainer).toHaveBeenCalledWith(WORKSPACE_ID, false);
+
+    const rebuildButton = container.querySelector(
+      '[data-testid="container-rebuild"]',
+    ) as HTMLElement | null;
+    expect(rebuildButton).not.toBeNull();
+    await act(async () => {
+      rebuildButton?.click();
+    });
+    expect(client.rebuildContainer).toHaveBeenCalledWith(WORKSPACE_ID);
   });
 });
 
 describe("normalizeWorkspaceDescriptor preserves container fields", () => {
-  it("preserves containerStatus from the wire payload", () => {
+  it("preserves containerBackend from the wire payload", () => {
     const descriptor = normalizeWorkspaceDescriptor({
       id: "ws-1",
       projectId: "prj-1",
@@ -372,7 +277,8 @@ describe("normalizeWorkspaceDescriptor preserves container fields", () => {
       activityAt: null,
       diffStat: null,
       scripts: [],
-      containerStatus: "starting",
+      containerBackend: "devcontainer",
+      containerStatus: "running",
       hasDevContainerConfig: true,
       containerInfo: {
         backend: "devcontainer",
@@ -383,7 +289,8 @@ describe("normalizeWorkspaceDescriptor preserves container fields", () => {
         remoteUser: "root",
       },
     });
-    expect(descriptor.containerStatus).toBe("starting");
+    expect(descriptor.containerBackend).toBe("devcontainer");
+    expect(descriptor.containerStatus).toBe("running");
     expect(descriptor.hasDevContainerConfig).toBe(true);
     expect(descriptor.containerInfo).toEqual({
       backend: "devcontainer",
@@ -395,7 +302,7 @@ describe("normalizeWorkspaceDescriptor preserves container fields", () => {
     });
   });
 
-  it("preserves undefined containerStatus when not in the wire payload", () => {
+  it("preserves undefined containerBackend when not in the wire payload", () => {
     const descriptor = normalizeWorkspaceDescriptor({
       id: "ws-1",
       projectId: "prj-1",
@@ -415,6 +322,7 @@ describe("normalizeWorkspaceDescriptor preserves container fields", () => {
       diffStat: null,
       scripts: [],
     });
+    expect(descriptor.containerBackend).toBeUndefined();
     expect(descriptor.containerStatus).toBeUndefined();
   });
 });

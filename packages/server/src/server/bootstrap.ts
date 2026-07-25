@@ -854,7 +854,7 @@ export async function createPaseoDaemon(
       if (!launchStrategyRegistry) return null;
       if (workspaceId) {
         const workspace = await workspaceRegistry?.get(workspaceId);
-        if (workspace?.containerApproval === "denied") return null;
+        if (workspace?.containerBackend === "host") return null;
       }
       const strategy = await launchStrategyRegistry.awaitStrategy(cwd);
       return strategy.isIsolated ? strategy : null;
