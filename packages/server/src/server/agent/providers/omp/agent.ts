@@ -2333,6 +2333,7 @@ export class OmpAgentClient implements AgentClient {
       protocolMode: "rpc-ui",
       modeId: launchMode.modeId,
       extraArgs: launchMode.extraArgs,
+      launchStrategy: options.scope === "workspace" ? options.launchStrategy : undefined,
     });
     try {
       const models = transformOmpModels(

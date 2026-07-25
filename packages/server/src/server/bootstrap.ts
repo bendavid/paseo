@@ -838,6 +838,23 @@ export async function createPaseoDaemon(
     managedProcesses,
     isDev: config.isDev === true,
     extraClients: config.agentClients,
+    resolveLaunchStrategy: async (cwd) => {
+      if (!launchStrategyRegistry) return null;
+      // Look up the workspace by cwd to check containerBackend.
+      const workspaces = await workspaceRegistry?.list();
+      const workspaceId = workspaces ? resolveWorkspaceIdForPath(cwd, workspaces) : null;
+      if (workspaceId) {
+        const workspace = await workspaceRegistry?.get(workspaceId);
+        if (workspace?.containerBackend === "host") return null;
+      }
+      // Strict: workspace-scoped catalog refresh must use the container's
+      // tool, not the host's. Throws if the container isn't running.
+      const strategy = await launchStrategyRegistry.awaitStrategy(cwd);
+      if (!strategy.isIsolated) {
+        throw new Error("Container is not running for this workspace");
+      }
+      return strategy;
+    },
   });
   const initialAgentManagerState = providerSnapshotManager.getAgentManagerProviderState();
   const agentManager = new AgentManager({
@@ -852,6 +869,13 @@ export async function createPaseoDaemon(
     launchStrategyRegistry,
     resolveLaunchStrategy: async (cwd, workspaceId) => {
       if (!launchStrategyRegistry) return null;
+      // Catalog/metadata ops call with cwd only — resolve workspaceId from cwd.
+      if (!workspaceId) {
+        const workspaces = await workspaceRegistry?.list();
+        workspaceId = workspaces
+          ? (resolveWorkspaceIdForPath(cwd, workspaces) ?? undefined)
+          : undefined;
+      }
       if (workspaceId) {
         const workspace = await workspaceRegistry?.get(workspaceId);
         if (workspace?.containerBackend === "host") return null;

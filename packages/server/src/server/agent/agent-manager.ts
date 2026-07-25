@@ -645,6 +645,17 @@ export class AgentManager {
     });
   }
 
+  /**
+   * Strict launch strategy resolver for workspace-scoped catalog/metadata
+   * operations. Throws when the container isn't running — the caller decides
+   * how to handle the error (listImportableSessions returns [], archive is
+   * best-effort, unarchive propagates).
+   */
+  private async resolveLaunchStrategyForCwd(cwd: string): Promise<ProcessLaunchStrategy | null> {
+    if (!this.resolveLaunchStrategy) return null;
+    return await this.resolveLaunchStrategy(cwd);
+  }
+
   private configurePaseoTools(options: AgentManagerOptions): void {
     this.paseoToolsEnabled = options.paseoToolsEnabled ?? true;
     this.paseoToolCatalogFactory = options.paseoToolCatalogFactory ?? null;
@@ -839,10 +850,14 @@ export class AgentManager {
     const sessionLists = await Promise.all(
       providerEntries.map(async ([provider, client]) => {
         try {
+          const launchStrategy = options?.cwd
+            ? await this.resolveLaunchStrategyForCwd(options.cwd)
+            : null;
           return (
             await client.listImportableSessions!({
               limit: options?.limit,
               cwd: options?.cwd,
+              ...(launchStrategy ? { launchStrategy } : {}),
             })
           ).map((session) => Object.assign(session, { provider }));
         } catch (error) {
@@ -4355,7 +4370,13 @@ export class AgentManager {
     const client = this.clients.get(provider);
     if (!client?.archiveNativeSession) return;
     try {
-      await client.archiveNativeSession(persistence);
+      const cwd =
+        typeof persistence.metadata?.cwd === "string" ? persistence.metadata.cwd : undefined;
+      const launchStrategy = cwd ? await this.resolveLaunchStrategyForCwd(cwd) : null;
+      await client.archiveNativeSession(
+        persistence,
+        launchStrategy ? { launchStrategy } : undefined,
+      );
     } catch (error) {
       this.logger.warn(
         { error, provider, sessionId: persistence.sessionId },
@@ -4371,7 +4392,13 @@ export class AgentManager {
     if (!persistence) return;
     const client = this.clients.get(provider);
     if (!client?.unarchiveNativeSession) return;
-    await client.unarchiveNativeSession(persistence);
+    const cwd =
+      typeof persistence.metadata?.cwd === "string" ? persistence.metadata.cwd : undefined;
+    const launchStrategy = cwd ? await this.resolveLaunchStrategyForCwd(cwd) : null;
+    await client.unarchiveNativeSession(
+      persistence,
+      launchStrategy ? { launchStrategy } : undefined,
+    );
   }
 
   private requireAgent(id: string): LiveManagedAgent {

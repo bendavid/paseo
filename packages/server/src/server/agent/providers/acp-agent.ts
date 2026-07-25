@@ -858,6 +858,7 @@ export class ACPAgentClient implements AgentClient {
           onSpawned: (spawned) => {
             probe = spawned;
           },
+          launchStrategy: options.scope === "workspace" ? options.launchStrategy : undefined,
         });
         probe = initializedProbe;
         const response = await this.runACPRequest(() =>
@@ -919,7 +920,7 @@ export class ACPAgentClient implements AgentClient {
   async listImportableSessions(
     options?: ListImportableSessionsOptions,
   ): Promise<ImportableProviderSession[]> {
-    const probe = await this.spawnProcess(PROBE_ENV);
+    const probe = await this.spawnProcess(PROBE_ENV, { launchStrategy: options?.launchStrategy });
     try {
       if (!probe.initialize.agentCapabilities?.sessionCapabilities?.list) {
         return [];
@@ -981,9 +982,10 @@ export class ACPAgentClient implements AgentClient {
     options?: {
       initializeTimeoutMs?: number;
       onSpawned?: (probe: UninitializedACPProcess) => void;
+      launchStrategy?: ProcessLaunchStrategy;
     },
   ): Promise<SpawnedACPProcess> {
-    const transport = await this.spawnTransport(launchEnv);
+    const transport = await this.spawnTransport(launchEnv, options?.launchStrategy);
     const probe: UninitializedACPProcess = {
       child: transport.child,
       connection: transport.connection,
@@ -1003,17 +1005,26 @@ export class ACPAgentClient implements AgentClient {
       throw error;
     }
   }
-
-  protected async spawnTransport(launchEnv?: Record<string, string>): Promise<ACPProcessTransport> {
+  protected async spawnTransport(
+    launchEnv?: Record<string, string>,
+    launchStrategy?: ProcessLaunchStrategy,
+  ): Promise<ACPProcessTransport> {
     const { command, args } = await this.resolveLaunchCommand();
-    const child = spawnProcess(command, args, {
-      cwd: process.cwd(),
-      ...createProviderEnvSpec({
-        runtimeSettings: this.runtimeSettings,
-        overlays: [launchEnv],
-      }),
-      stdio: ["pipe", "pipe", "pipe"],
+    const envSpec = createProviderEnvSpec({
+      runtimeSettings: this.runtimeSettings,
+      overlays: [launchEnv],
     });
+    const child = launchStrategy
+      ? launchStrategy.spawn(command, args, {
+          cwd: process.cwd(),
+          ...envSpec,
+          stdio: ["pipe", "pipe", "pipe"],
+        })
+      : spawnProcess(command, args, {
+          cwd: process.cwd(),
+          ...envSpec,
+          stdio: ["pipe", "pipe", "pipe"],
+        });
     assertChildWithPipes(child);
 
     const stderrChunks: string[] = [];

@@ -516,6 +516,8 @@ export interface ListImportableSessionsOptions {
    * sessions by working directory should do so before doing expensive work.
    */
   cwd?: string;
+  /** When set, run the listing probe inside the isolated environment. */
+  launchStrategy?: ProcessLaunchStrategy;
 }
 
 export interface ImportableProviderSession {
@@ -677,6 +679,8 @@ export type FetchCatalogOptions =
       cwd: string;
       force: boolean;
       timeoutMs?: number;
+      /** When set, run the catalog probe inside the isolated environment. */
+      launchStrategy?: ProcessLaunchStrategy;
     };
 
 export interface ProviderCatalog {
@@ -733,12 +737,18 @@ export interface AgentClient {
    * Archive a durable native session (best-effort). Runtime release belongs to AgentSession.close().
    * Called when Paseo archives an agent so the provider's own UI reflects the same state.
    */
-  archiveNativeSession?(handle: AgentPersistenceHandle): Promise<void>;
+  archiveNativeSession?(
+    handle: AgentPersistenceHandle,
+    options?: { launchStrategy?: ProcessLaunchStrategy },
+  ): Promise<void>;
   /**
    * Unarchive a durable native session in the provider.
    * Called before Paseo clears its archived flag so provider resume can succeed.
    */
-  unarchiveNativeSession?(handle: AgentPersistenceHandle): Promise<void>;
+  unarchiveNativeSession?(
+    handle: AgentPersistenceHandle,
+    options?: { launchStrategy?: ProcessLaunchStrategy },
+  ): Promise<void>;
   /**
    * Release any provider-owned resources held by this client (background
    * processes, sockets, cached subprocesses, etc.). Called when the daemon

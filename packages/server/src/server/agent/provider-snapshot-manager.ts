@@ -6,6 +6,7 @@ import type { Logger } from "pino";
 
 import { expandTilde } from "../../utils/path.js";
 import { withTimeout } from "../../utils/promise-timeout.js";
+import type { ProcessLaunchStrategy } from "../devcontainer/launch-strategy.js";
 import type {
   AgentClient,
   AgentCreateConfigParent,
@@ -93,6 +94,8 @@ export interface ProviderSnapshotManagerOptions {
   extraClients?: Partial<Record<AgentProvider, AgentClient>>;
   refreshTimeoutMs?: number;
   diagnosticTimeoutMs?: number;
+  /** Resolves a launch strategy for a cwd, or null for host execution. */
+  resolveLaunchStrategy?: (cwd: string) => Promise<ProcessLaunchStrategy | null>;
 }
 
 interface ProviderSnapshotRefreshOptions {
@@ -182,6 +185,7 @@ export class ProviderSnapshotManager {
   private readonly managedProcesses?: ManagedProcessRegistry;
   private readonly isDev: boolean;
   private readonly extraClients: Partial<Record<AgentProvider, AgentClient>>;
+  private readonly resolveLaunchStrategy?: (cwd: string) => Promise<ProcessLaunchStrategy | null>;
   private runtimeSettings: AgentProviderRuntimeSettingsMap | undefined;
   private providerOverrides: Record<string, ProviderOverride> | undefined;
   private baseProviderOverrides: Record<string, ProviderOverride> | undefined;
@@ -193,6 +197,7 @@ export class ProviderSnapshotManager {
     this.workspaceGitService = options.workspaceGitService;
     this.managedProcesses = options.managedProcesses;
     this.isDev = options.isDev === true;
+    this.resolveLaunchStrategy = options.resolveLaunchStrategy;
     this.extraClients = options.extraClients ?? {};
     this.runtimeSettings = options.runtimeSettings;
     this.providerOverrides = options.providerOverrides;
@@ -791,8 +796,17 @@ export class ProviderSnapshotManager {
       }
 
       const catalogOptions = createFetchCatalogOptions(catalogScope, force);
+      const launchStrategy =
+        catalogOptions.scope === "workspace" && this.resolveLaunchStrategy
+          ? ((await this.resolveLaunchStrategy(catalogOptions.cwd)) ?? undefined)
+          : undefined;
       const catalog = await withTimeout(
-        definition.fetchCatalog({ ...catalogOptions, timeoutMs: this.refreshTimeoutMs }, client),
+        definition.fetchCatalog(
+          catalogOptions.scope === "workspace"
+            ? { ...catalogOptions, timeoutMs: this.refreshTimeoutMs, launchStrategy }
+            : { ...catalogOptions, timeoutMs: this.refreshTimeoutMs },
+          client,
+        ),
         this.refreshTimeoutMs,
         `Timed out refreshing ${definition.label} after ${this.refreshTimeoutMs}ms`,
       );

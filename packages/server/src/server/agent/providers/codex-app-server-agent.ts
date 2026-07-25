@@ -6388,7 +6388,7 @@ export class CodexAppServerAgentClient implements AgentClient {
   async listImportableSessions(
     options?: ListImportableSessionsOptions,
   ): Promise<ImportableProviderSession[]> {
-    const child = await this.spawnAppServer();
+    const child = await this.spawnAppServer(undefined, { launchStrategy: options?.launchStrategy });
     const client =
       this.deps._createCodexClient?.(child, this.logger, () => ({})) ??
       new CodexAppServerClient(child, this.logger);
@@ -6443,9 +6443,10 @@ export class CodexAppServerAgentClient implements AgentClient {
     });
   }
 
-  async fetchCatalog(_options: FetchCatalogOptions): Promise<ProviderCatalog> {
+  async fetchCatalog(options: FetchCatalogOptions): Promise<ProviderCatalog> {
+    const launchStrategy = options.scope === "workspace" ? options.launchStrategy : undefined;
     const [models, autoReviewEnabled] = await Promise.all([
-      this.fetchModelsFromAppServer(),
+      this.fetchModelsFromAppServer(launchStrategy),
       this.resolveAutoReviewEnabled(),
     ]);
     return {
@@ -6461,9 +6462,11 @@ export class CodexAppServerAgentClient implements AgentClient {
     return (await this.resolveAutoReviewEnabled()) ? "auto-review" : DEFAULT_CODEX_MODE_ID;
   }
 
-  private async fetchModelsFromAppServer(): Promise<AgentModelDefinition[]> {
+  private async fetchModelsFromAppServer(
+    launchStrategy?: ProcessLaunchStrategy,
+  ): Promise<AgentModelDefinition[]> {
     // Codex model/list is global to the app server in this flow; cwd/force are intentionally ignored.
-    const child = await this.spawnAppServer();
+    const child = await this.spawnAppServer(undefined, { launchStrategy });
     const client = new CodexAppServerClient(child, this.logger);
 
     try {
@@ -6492,11 +6495,14 @@ export class CodexAppServerAgentClient implements AgentClient {
     }
   }
 
-  async archiveNativeSession(handle: AgentPersistenceHandle): Promise<void> {
+  async archiveNativeSession(
+    handle: AgentPersistenceHandle,
+    options?: { launchStrategy?: ProcessLaunchStrategy },
+  ): Promise<void> {
     const threadId = handle.nativeHandle ?? handle.sessionId;
     if (!threadId) return;
 
-    const child = await this.spawnAppServer();
+    const child = await this.spawnAppServer(undefined, { launchStrategy: options?.launchStrategy });
     const client = new CodexAppServerClient(child, this.logger);
 
     try {
@@ -6508,11 +6514,14 @@ export class CodexAppServerAgentClient implements AgentClient {
     }
   }
 
-  async unarchiveNativeSession(handle: AgentPersistenceHandle): Promise<void> {
+  async unarchiveNativeSession(
+    handle: AgentPersistenceHandle,
+    options?: { launchStrategy?: ProcessLaunchStrategy },
+  ): Promise<void> {
     const threadId = handle.nativeHandle ?? handle.sessionId;
     if (!threadId) return;
 
-    const child = await this.spawnAppServer();
+    const child = await this.spawnAppServer(undefined, { launchStrategy: options?.launchStrategy });
     const client = new CodexAppServerClient(child, this.logger);
 
     try {
