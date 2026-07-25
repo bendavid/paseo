@@ -8,6 +8,7 @@ import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import { ContainerBackendSelector } from "@/components/container-backend-selector";
 
 vi.mock("react-native-unistyles", () => {
   const testTheme = {
@@ -324,5 +325,91 @@ describe("normalizeWorkspaceDescriptor preserves container fields", () => {
     });
     expect(descriptor.containerBackend).toBeUndefined();
     expect(descriptor.containerStatus).toBeUndefined();
+  });
+});
+
+describe("ContainerBackendSelector", () => {
+  it("renders both Host and Dev Container options when hasDevContainerConfig is true", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(
+        React.createElement(ContainerBackendSelector, {
+          value: "host",
+          dockerAvailable: true,
+          onChange: () => {},
+        }),
+      );
+    });
+    expect(container.textContent).toContain("workspaceSetup.containerBackend.label");
+    expect(container.textContent).toContain("workspaceSetup.containerBackend.host");
+    expect(container.textContent).toContain("workspaceSetup.containerBackend.devcontainer");
+    root.unmount();
+    document.body.removeChild(container);
+  });
+
+  it("shows docker unavailable hint when docker is not available", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(
+        React.createElement(ContainerBackendSelector, {
+          value: "host",
+          dockerAvailable: false,
+          onChange: () => {},
+        }),
+      );
+    });
+    expect(container.textContent).toContain("workspaceSetup.containerBackend.dockerUnavailable");
+    root.unmount();
+    document.body.removeChild(container);
+  });
+
+  it("does not show docker unavailable hint when docker is available", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(
+        React.createElement(ContainerBackendSelector, {
+          value: "host",
+          dockerAvailable: true,
+          onChange: () => {},
+        }),
+      );
+    });
+    expect(container.textContent).not.toContain("dockerUnavailable");
+    root.unmount();
+    document.body.removeChild(container);
+  });
+
+  it("calls onChange with 'devcontainer' when Dev Container option is pressed", async () => {
+    const onChange = vi.fn();
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(
+        React.createElement(ContainerBackendSelector, {
+          value: "host",
+          dockerAvailable: true,
+          onChange,
+        }),
+      );
+    });
+    // Pressable renders as a div in react-native-web; find by text content
+    const allElements = Array.from(container.querySelectorAll("*"));
+    const devContainerBtn = allElements.find(
+      (el) => el.textContent === "workspaceSetup.containerBackend.devcontainer",
+    ) as HTMLElement | undefined;
+    expect(devContainerBtn).toBeDefined();
+    await act(async () => {
+      devContainerBtn?.click();
+    });
+    expect(onChange).toHaveBeenCalledWith("devcontainer");
+    root.unmount();
+    document.body.removeChild(container);
   });
 });
