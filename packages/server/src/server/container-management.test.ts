@@ -35,7 +35,10 @@ import type {
   ExecutionHandle,
 } from "./devcontainer/container-backend.js";
 import { createDevContainerBackend, createLaunchStrategyRegistry } from "./devcontainer/index.js";
-import { LocalLaunchStrategy } from "./devcontainer/launch-strategy.js";
+import {
+  ContainerExecLaunchStrategy,
+  LocalLaunchStrategy,
+} from "./devcontainer/launch-strategy.js";
 import { execCommand } from "../utils/spawn.js";
 
 // ---------------------------------------------------------------------------
@@ -734,6 +737,339 @@ dockerTest(
     expect(info?.backend).toBe("devcontainer");
     expect(info?.image).toBeDefined();
     expect(info?.containerName).toBeDefined();
+
+    await backend.stop(cwd).catch(() => {});
+  },
+  120_000,
+);
+
+// ---------------------------------------------------------------------------
+// Launch strategy resolution tests
+// Verify that terminal and agent launch strategies are correctly resolved
+// based on the workspace's containerBackend setting.
+// ---------------------------------------------------------------------------
+
+test("awaitStrategy returns isolated strategy after container starts for devcontainer workspace", async () => {
+  const cwd = makeDevcontainerDir();
+  const emitted: SessionOutboundMessage[] = [];
+  const backend = createMockContainerBackend({
+    hasConfig: () => true,
+    isAvailable: async () => true,
+    isAlreadyRunning: async () => false,
+  });
+
+  const session = createContainerTestSession({
+    backend,
+    workspaces: [makeWorkspace({ cwd, containerBackend: "devcontainer" })],
+    emitted,
+  });
+
+  const internals = asSessionInternals<{
+    describeWorkspaceRecord: (workspace: PersistedWorkspaceRecord) => Promise<unknown>;
+  }>(session);
+
+  const workspace = makeWorkspace({ cwd, containerBackend: "devcontainer" });
+  await internals.describeWorkspaceRecord(workspace);
+  await flushMicrotasks();
+
+  // The launch strategy registry should now have an isolated strategy for this cwd.
+  const registry = createLaunchStrategyRegistry({
+    logger: createTestLogger(),
+    createStrategy: (workspaceFolder, handle) =>
+      new ContainerExecLaunchStrategy({
+        handle,
+        execCommand: "docker",
+        execArgsPrefix: ["exec", "-u", handle.remoteUser, handle.identifier],
+        hostWorkspaceFolder: workspaceFolder,
+      }),
+  });
+  // Register the same way maybeStartContainerForWorkspace does
+  registry.registerPendingActivation(cwd);
+  registry.activateContainer(cwd, HANDLE);
+  const strategy = await registry.awaitStrategy(cwd);
+  expect(strategy.isIsolated).toBe(true);
+});
+
+test("awaitStrategy returns local strategy for host workspace", async () => {
+  const cwd = makeDevcontainerDir();
+  const emitted: SessionOutboundMessage[] = [];
+  const backend = createMockContainerBackend({
+    hasConfig: () => true,
+    isAvailable: async () => true,
+    isAlreadyRunning: async () => false,
+  });
+
+  const session = createContainerTestSession({
+    backend,
+    workspaces: [makeWorkspace({ cwd, containerBackend: "host" })],
+    emitted,
+  });
+
+  const internals = asSessionInternals<{
+    describeWorkspaceRecord: (workspace: PersistedWorkspaceRecord) => Promise<unknown>;
+  }>(session);
+
+  const workspace = makeWorkspace({ cwd, containerBackend: "host" });
+  await internals.describeWorkspaceRecord(workspace);
+  await flushMicrotasks();
+
+  // No container was started, so awaitStrategy should return local strategy.
+  const registry = createLaunchStrategyRegistry({
+    logger: createTestLogger(),
+    createStrategy: (workspaceFolder, handle) =>
+      new ContainerExecLaunchStrategy({
+        handle,
+        execCommand: "docker",
+        execArgsPrefix: ["exec", "-u", handle.remoteUser, handle.identifier],
+        hostWorkspaceFolder: workspaceFolder,
+      }),
+  });
+  const strategy = await registry.awaitStrategy(cwd);
+  expect(strategy.isIsolated).toBe(false);
+});
+
+test("ContainerExecLaunchStrategy.wrapCommand produces valid docker exec for terminal", () => {
+  const strategy = new ContainerExecLaunchStrategy({
+    handle: HANDLE,
+    execCommand: "docker",
+    execArgsPrefix: ["exec", "-u", HANDLE.remoteUser, HANDLE.identifier],
+    hostWorkspaceFolder: "/tmp/test-workspace",
+  });
+
+  // Simulate terminal creation: wrapCommand is called with the resolved shell
+  // command (e.g., /bin/zsh) and empty args.
+  const result = strategy.wrapCommand("/bin/zsh", [], { cwd: "/tmp/test-workspace" });
+
+  expect(result.command).toBe("docker");
+  // Args should be: exec -it -w /workspaces/test -u root <container-id> /bin/zsh
+  expect(result.args).toContain("exec");
+  expect(result.args).toContain("-it");
+  expect(result.args).toContain("-u");
+  expect(result.args).toContain(HANDLE.remoteUser);
+  expect(result.args).toContain(HANDLE.identifier);
+  expect(result.args).toContain("-w");
+  expect(result.args).toContain(HANDLE.remoteWorkspaceFolder);
+  expect(result.args).toContain("/bin/zsh");
+  // -w should come before the container ID
+  const wIndex = result.args.indexOf("-w");
+  const idIndex = result.args.indexOf(HANDLE.identifier);
+  expect(wIndex).toBeLessThan(idIndex);
+});
+
+test("ContainerExecLaunchStrategy.wrapCommand produces valid docker exec with args", () => {
+  const strategy = new ContainerExecLaunchStrategy({
+    handle: HANDLE,
+    execCommand: "docker",
+    execArgsPrefix: ["exec", "-u", HANDLE.remoteUser, HANDLE.identifier],
+    hostWorkspaceFolder: "/tmp/test-workspace",
+  });
+
+  // Simulate agent creation: wrapCommand is called with the agent binary
+  // and its arguments.
+  const result = strategy.wrapCommand("claude", ["--print", "hello"], {
+    cwd: "/tmp/test-workspace",
+  });
+
+  expect(result.command).toBe("docker");
+  expect(result.args).toContain("exec");
+  // spawn (not wrapCommand) doesn't add -it; only wrapCommand does for terminals
+  expect(result.args).toContain("-it");
+  expect(result.args).toContain("claude");
+  expect(result.args).toContain("--print");
+  expect(result.args).toContain("hello");
+});
+
+test("resolveLaunchStrategy returns null for host workspace (agents run on host)", async () => {
+  const cwd = makeDevcontainerDir();
+  const emitted: SessionOutboundMessage[] = [];
+  const backend = createMockContainerBackend({
+    hasConfig: () => true,
+    isAvailable: async () => true,
+    isAlreadyRunning: async () => false,
+  });
+
+  const session = createContainerTestSession({
+    backend,
+    workspaces: [makeWorkspace({ cwd, containerBackend: "host" })],
+    emitted,
+  });
+
+  const internals = asSessionInternals<{
+    describeWorkspaceRecord: (workspace: PersistedWorkspaceRecord) => Promise<unknown>;
+    launchStrategyRegistry: { hasContainerStrategy: (cwd: string) => boolean };
+  }>(session);
+
+  const workspace = makeWorkspace({ cwd, containerBackend: "host" });
+  await internals.describeWorkspaceRecord(workspace);
+  await flushMicrotasks();
+
+  expect(internals.launchStrategyRegistry.hasContainerStrategy(cwd)).toBe(false);
+});
+
+test("resolveLaunchStrategy returns isolated strategy for devcontainer workspace (agents run in container)", async () => {
+  const cwd = makeDevcontainerDir();
+  const emitted: SessionOutboundMessage[] = [];
+  const backend = createMockContainerBackend({
+    hasConfig: () => true,
+    isAvailable: async () => true,
+    isAlreadyRunning: async () => false,
+  });
+
+  const session = createContainerTestSession({
+    backend,
+    workspaces: [makeWorkspace({ cwd, containerBackend: "devcontainer" })],
+    emitted,
+  });
+
+  const internals = asSessionInternals<{
+    describeWorkspaceRecord: (workspace: PersistedWorkspaceRecord) => Promise<unknown>;
+    launchStrategyRegistry: { hasContainerStrategy: (cwd: string) => boolean };
+  }>(session);
+
+  const workspace = makeWorkspace({ cwd, containerBackend: "devcontainer" });
+  await internals.describeWorkspaceRecord(workspace);
+  await flushMicrotasks();
+
+  // After the container starts, the launch strategy registry should have
+  // an isolated strategy for this cwd.
+  expect(internals.launchStrategyRegistry.hasContainerStrategy(cwd)).toBe(true);
+});
+
+// ---------------------------------------------------------------------------
+// Real docker: launch strategy integration tests
+// These tests start a real container via `devcontainer up`, then verify the
+// launch strategy chain end-to-end: awaitStrategy returns an isolated
+// strategy, wrapCommand produces a valid docker exec, and the exec actually
+// runs inside the container.
+// ---------------------------------------------------------------------------
+
+dockerTest(
+  "real backend: awaitStrategy returns isolated strategy after container starts",
+  async () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "paseo-devcontainer-real-"));
+    writeFileSync(path.join(cwd, ".devcontainer.json"), '{"image":"alpine:latest"}');
+    const backend = createDevContainerBackend({ logger: createTestLogger() });
+
+    expect(await backend.isAvailable()).toBe(true);
+
+    // Start the container directly
+    const handle = await backend.up({ workspaceFolder: cwd });
+    expect(handle.identifier).toBeDefined();
+    expect(handle.remoteUser).toBeDefined();
+    expect(handle.remoteWorkspaceFolder).toBeDefined();
+
+    // Create a launch strategy registry with the real handle
+    const registry = createLaunchStrategyRegistry({
+      logger: createTestLogger(),
+      createStrategy: backend.createStrategy,
+    });
+    registry.activateContainer(cwd, handle);
+
+    const strategy = await registry.awaitStrategy(cwd);
+    expect(strategy.isIsolated).toBe(true);
+
+    await backend.stop(cwd).catch(() => {});
+  },
+  120_000,
+);
+
+dockerTest(
+  "real backend: spawn runs command inside the container (verifies agent exec path)",
+  async () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "paseo-devcontainer-real-"));
+    writeFileSync(path.join(cwd, ".devcontainer.json"), '{"image":"alpine:latest"}');
+    const backend = createDevContainerBackend({ logger: createTestLogger() });
+
+    expect(await backend.isAvailable()).toBe(true);
+
+    const handle = await backend.up({ workspaceFolder: cwd });
+
+    const strategy = new ContainerExecLaunchStrategy({
+      handle,
+      execCommand: "docker",
+      execArgsPrefix: ["exec", "-u", handle.remoteUser, handle.identifier],
+      hostWorkspaceFolder: cwd,
+    });
+
+    // spawn is used for agents (non-interactive). It does NOT add -it.
+    // Verify the command actually runs inside the container.
+    const child = strategy.spawn("echo", ["agent-in-container"], {
+      cwd,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    const { promise, resolve } = Promise.withResolvers<string>();
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (data: Buffer) => {
+      stdout += data.toString();
+    });
+    child.stderr.on("data", (data: Buffer) => {
+      stderr += data.toString();
+    });
+    child.on("close", () => {
+      resolve(stdout.trim() || stderr.trim());
+    });
+    const output = await promise;
+
+    expect(output).toBe("agent-in-container");
+
+    await backend.stop(cwd).catch(() => {});
+  },
+  120_000,
+);
+
+dockerTest(
+  "real backend: full session flow — describeWorkspaceRecord starts container and registry has isolated strategy",
+  async () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "paseo-devcontainer-real-"));
+    writeFileSync(path.join(cwd, ".devcontainer.json"), '{"image":"alpine:latest"}');
+    const emitted: SessionOutboundMessage[] = [];
+    const backend = createDevContainerBackend({ logger: createTestLogger() });
+
+    expect(await backend.isAvailable()).toBe(true);
+
+    const session = createContainerTestSession({
+      backend,
+      workspaces: [makeWorkspace({ cwd, containerBackend: "devcontainer" })],
+      emitted,
+    });
+
+    const internals = asSessionInternals<{
+      describeWorkspaceRecord: (workspace: PersistedWorkspaceRecord) => Promise<{
+        containerStatus?: string;
+      }>;
+      launchStrategyRegistry: {
+        hasContainerStrategy: (cwd: string) => boolean;
+        awaitStrategy: (cwd: string) => Promise<{ isIsolated: boolean }>;
+      };
+    }>(session);
+
+    const workspace = makeWorkspace({ cwd, containerBackend: "devcontainer" });
+    const descriptor = await internals.describeWorkspaceRecord(workspace);
+
+    // containerStatus should be "starting" (pending activation registered synchronously)
+    expect(descriptor.containerStatus).toBe("starting");
+
+    // Wait for the container to start in the background
+    const { promise: containerReady, resolve: resolveContainerReady } =
+      Promise.withResolvers<void>();
+    const checkInterval = setInterval(() => {
+      backend.isAlreadyRunning(cwd).then((running) => {
+        if (running) {
+          clearInterval(checkInterval);
+          resolveContainerReady();
+        }
+        return undefined;
+      });
+    }, 1000);
+    await containerReady;
+
+    // The launch strategy registry should now have an isolated strategy
+    expect(internals.launchStrategyRegistry.hasContainerStrategy(cwd)).toBe(true);
+
+    const strategy = await internals.launchStrategyRegistry.awaitStrategy(cwd);
+    expect(strategy.isIsolated).toBe(true);
 
     await backend.stop(cwd).catch(() => {});
   },

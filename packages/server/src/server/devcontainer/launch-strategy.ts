@@ -120,7 +120,11 @@ export class ContainerExecLaunchStrategy implements ProcessLaunchStrategy {
       ? this.resolveCwd(options.cwd)
       : this.handle.remoteWorkspaceFolder;
 
-    const execArgs = [...this.execArgsPrefix, "-w", containerCwd];
+    // Insert -w before the container ID (which is the last element of execArgsPrefix).
+    // docker exec syntax: exec [OPTIONS] CONTAINER COMMAND [ARG...]
+    const execArgs = [...this.execArgsPrefix];
+    const containerIdIndex = execArgs.length - 1;
+    execArgs.splice(containerIdIndex, 0, "-w", containerCwd);
 
     // Pass env overlays as -e flags. The environment's own env is inherited
     // by the exec; we only need to add the overlay variables.
@@ -132,9 +136,9 @@ export class ContainerExecLaunchStrategy implements ProcessLaunchStrategy {
 
     execArgs.push(command, ...args);
 
-    // Use a minimal host env to avoid leaking host-specific paths.
+    // docker/podman needs PATH to be found on the host. The container's
+    // own PATH is set by the container image, not inherited from the host.
     const childEnv: NodeJS.ProcessEnv = { ...process.env };
-    delete childEnv.PATH;
 
     return spawn(this.execCommand, execArgs, {
       cwd: this.hostWorkspaceFolder,
@@ -143,18 +147,21 @@ export class ContainerExecLaunchStrategy implements ProcessLaunchStrategy {
       windowsHide: true,
     });
   }
-
   wrapCommand(command: string, args: string[], options?: { cwd?: string }): ResolvedCommand {
     const containerCwd = options?.cwd
       ? this.resolveCwd(options.cwd)
       : this.handle.remoteWorkspaceFolder;
     // For terminals, insert -it for interactive mode after "exec".
+    // Insert -w before the container ID (which is the last element of execArgsPrefix).
+    // docker exec syntax: exec [OPTIONS] CONTAINER COMMAND [ARG...]
     const execArgs = [...this.execArgsPrefix];
     const execIndex = execArgs.indexOf("exec");
     if (execIndex >= 0) {
       execArgs.splice(execIndex + 1, 0, "-it");
     }
-    execArgs.push("-w", containerCwd, command, ...args);
+    const containerIdIndex = execArgs.length - 1;
+    execArgs.splice(containerIdIndex, 0, "-w", containerCwd);
+    execArgs.push(command, ...args);
     return {
       command: this.execCommand,
       args: execArgs,
