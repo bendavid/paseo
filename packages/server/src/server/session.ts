@@ -561,7 +561,12 @@ function describeRegistryTransition(record: ArchivedRecordSnapshot | null): Regi
 function resolveContainerStatus(
   registry: LaunchStrategyRegistry | null,
   cwd: string,
+  approval: "pending" | "approved" | "denied",
 ): { containerStatus: "running" | "starting" } | Record<string, never> {
+  // A denied workspace never shows a container status, even if a container
+  // is running for this cwd (another workspace with the same cwd may have
+  // approved it).
+  if (approval === "denied") return {};
   if (registry?.hasContainerStrategy(cwd)) return { containerStatus: "running" };
   if (registry?.isPendingActivation(cwd)) return { containerStatus: "starting" };
   return {};
@@ -4295,7 +4300,11 @@ export class Session {
             project: await this.buildProjectPlacementForWorkspace(workspace, resolvedProjectRecord),
           }
         : {}),
-      ...resolveContainerStatus(this.launchStrategyRegistry, workspace.cwd),
+      ...resolveContainerStatus(
+        this.launchStrategyRegistry,
+        workspace.cwd,
+        workspace.containerApproval,
+      ),
       hasDevContainerConfig: this.containerBackend?.hasConfig(workspace.cwd) ?? false,
       // containerInfo is fetched async and emitted as a follow-up workspace
       // update, so a slow docker inspect doesn't block the descriptor.
