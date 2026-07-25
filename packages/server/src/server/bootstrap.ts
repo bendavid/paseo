@@ -856,8 +856,14 @@ export async function createPaseoDaemon(
         const workspace = await workspaceRegistry?.get(workspaceId);
         if (workspace?.containerBackend === "host") return null;
       }
+      // awaitStrategy throws if the container fails to start. If it returns
+      // a non-isolated strategy, the container hasn't started yet — treat
+      // this as an error, not a fallback to host.
       const strategy = await launchStrategyRegistry.awaitStrategy(cwd);
-      return strategy.isIsolated ? strategy : null;
+      if (!strategy.isIsolated) {
+        throw new Error("Container is not running for this workspace");
+      }
+      return strategy;
     },
     logger,
   });

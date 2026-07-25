@@ -912,14 +912,19 @@ export class Session {
       getClientBufferedAmount: () => this.getTransportBufferedAmount(),
       resolveLaunchStrategy: async (cwd, workspaceId) => {
         if (!this.launchStrategyRegistry) return null;
-        // If the workspace uses the host backend, run on the host even if a
-        // container is running for this cwd.
+        // If the workspace uses the host backend, run on the host.
         if (workspaceId) {
           const workspace = await this.workspaceRegistry.get(workspaceId);
           if (workspace?.containerBackend === "host") return null;
         }
+        // awaitStrategy throws if the container fails to start. If it returns
+        // a non-isolated strategy, the container hasn't started yet — treat
+        // this as an error, not a fallback to host.
         const strategy = await this.launchStrategyRegistry.awaitStrategy(cwd);
-        return strategy.isIsolated ? strategy : null;
+        if (!strategy.isIsolated) {
+          throw new Error("Container is not running for this workspace");
+        }
+        return strategy;
       },
     });
     this.agentUpdates = createAgentUpdatesService({

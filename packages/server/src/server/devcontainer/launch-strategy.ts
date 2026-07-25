@@ -186,12 +186,15 @@ export class ContainerExecLaunchStrategy implements ProcessLaunchStrategy {
    * created without an explicit command.
    */
   async resolveDefaultShell(): Promise<string> {
+    // Try common shells in order of preference. Use `command -v` which is
+    // a POSIX builtin (more portable than `which`).
+    const shells = ["bash", "zsh", "sh"];
     try {
       const { execFile } = await import("node:child_process");
       const result = await new Promise<string>((resolveFn, rejectFn) => {
         execFile(
           this.execCommand,
-          [...this.execArgsPrefix, "sh", "-c", "which bash || which zsh || which sh"],
+          [...this.execArgsPrefix, "sh", "-c", shells.map((s) => `command -v ${s}`).join(" || ")],
           { timeout: 5_000, encoding: "utf8" },
           (err, stdout) => {
             if (err) rejectFn(err);
