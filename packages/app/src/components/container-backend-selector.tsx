@@ -55,12 +55,16 @@ export function ContainerBackendSelector({
           value: "host",
           label: t("workspaceSetup.containerBackend.host"),
         },
-        {
-          id: "devcontainer",
-          value: "devcontainer",
-          label: t("workspaceSetup.containerBackend.devcontainer"),
-          testID: "container-backend-devcontainer",
-        },
+        ...(dockerAvailable && hasDevContainerConfig
+          ? [
+              {
+                id: "devcontainer",
+                value: "devcontainer" as const,
+                label: t("workspaceSetup.containerBackend.devcontainer"),
+                testID: "container-backend-devcontainer",
+              },
+            ]
+          : []),
       ]}
       hint={hint}
       testID="container-backend-selector"

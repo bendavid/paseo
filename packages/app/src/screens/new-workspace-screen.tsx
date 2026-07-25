@@ -9,7 +9,14 @@ import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles"
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { createNameId } from "mnemonic-id";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronDown, Folder, FolderPlus, GitBranch, GitPullRequest } from "lucide-react-native";
+import {
+  ChevronDown,
+  Container,
+  Folder,
+  FolderPlus,
+  GitBranch,
+  GitPullRequest,
+} from "lucide-react-native";
 import { Composer } from "@/composer";
 import { FileDropZone } from "@/components/file-drop/file-drop-zone";
 import {
@@ -38,7 +45,6 @@ import {
   useHosts,
   type HostRuntimeConnectionStatus,
 } from "@/runtime/host-runtime";
-import { ContainerBackendSelector } from "@/components/container-backend-selector";
 import { useContainerBackendAvailability } from "@/hooks/use-container-backend-availability";
 import { useHostFeature, useHostFeatureMap } from "@/runtime/host-features";
 import type { HostProfile } from "@/types/host-connection";
@@ -418,6 +424,56 @@ function IsolationOptionItem({
   );
 }
 
+function containerBackendLabel(t: TFunction, backend: "host" | "devcontainer"): string {
+  return backend === "devcontainer"
+    ? t("workspaceSetup.containerBackend.devcontainer")
+    : t("workspaceSetup.containerBackend.host");
+}
+
+function ContainerBackendOptionItem({
+  optionId,
+  label,
+  selected,
+  active,
+  disabled,
+  onPress,
+  iconColor,
+  iconSize,
+}: {
+  optionId: string;
+  label: string;
+  selected: boolean;
+  active: boolean;
+  disabled: boolean;
+  onPress: () => void;
+  iconColor: string;
+  iconSize: number;
+}) {
+  const leadingSlot = useMemo(
+    () => (
+      <View style={styles.rowIconBox}>
+        {optionId === "devcontainer" ? (
+          <Container size={iconSize} color={iconColor} />
+        ) : (
+          <Folder size={iconSize} color={iconColor} />
+        )}
+      </View>
+    ),
+    [optionId, iconSize, iconColor],
+  );
+  return (
+    <ComboboxItem
+      testID={`workspace-create-container-backend-${optionId}`}
+      label={label}
+      selected={selected}
+      active={active}
+      disabled={disabled}
+      onPress={onPress}
+      leadingSlot={leadingSlot}
+    />
+  );
+}
+
 function ProjectOptionItem({
   testID,
   projectKey,
@@ -669,6 +725,49 @@ function IsolationPickerTrigger({
       <View style={styles.badgeIconBox}>
         {isolation === "worktree" ? (
           <GitBranch size={iconSize} color={iconColor} />
+        ) : (
+          <Folder size={iconSize} color={iconColor} />
+        )}
+      </View>
+      <Text style={styles.badgeText} numberOfLines={1}>
+        {label}
+      </Text>
+    </ComboboxTrigger>
+  );
+}
+
+function ContainerBackendPickerTrigger({
+  pickerAnchorRef,
+  onPress,
+  disabled,
+  badgePressableStyle,
+  containerBackend,
+  label,
+  iconColor,
+  iconSize,
+}: {
+  pickerAnchorRef: React.RefObject<View | null>;
+  onPress: () => void;
+  disabled: boolean;
+  badgePressableStyle: React.ComponentProps<typeof Pressable>["style"];
+  containerBackend: "host" | "devcontainer";
+  label: string;
+  iconColor: string;
+  iconSize: number;
+}) {
+  return (
+    <ComboboxTrigger
+      ref={pickerAnchorRef}
+      testID="workspace-create-container-backend-trigger"
+      onPress={onPress}
+      disabled={disabled}
+      style={badgePressableStyle}
+      accessibilityRole="button"
+      accessibilityLabel="Container backend"
+    >
+      <View style={styles.badgeIconBox}>
+        {containerBackend === "devcontainer" ? (
+          <Container size={iconSize} color={iconColor} />
         ) : (
           <Folder size={iconSize} color={iconColor} />
         )}
@@ -1320,6 +1419,13 @@ interface NewWorkspaceFormStackInput {
     renderOption: RefPickerRenderOption;
     canCreateWorktree: boolean;
   };
+  containerBackend: FormPickerControl & {
+    value: "host" | "devcontainer";
+    options: ComboboxOptionType[];
+    onSelect: (id: string) => void;
+    renderOption: RefPickerRenderOption;
+    canShow: boolean;
+  };
   base: FormPickerControl & {
     selectedSourceDirectory: string | null;
     selectedItem: PickerItem | null;
@@ -1337,12 +1443,13 @@ interface NewWorkspaceFormStackInput {
 function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactElement {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
-  const { isCompact, isPending, project, host, isolation, base } = input;
+  const { isCompact, isPending, project, host, isolation, containerBackend, base } = input;
 
   const selectedHostLabel =
     host.allHosts.find((h) => h.serverId === host.selectedServerId)?.label ?? "Host";
   const showHostControl = host.allHosts.length > 1;
   const isolationTriggerLabel = isolationLabel(t, isolation.effectiveIsolation);
+  const containerBackendTriggerLabel = containerBackendLabel(t, containerBackend.value);
   const addProjectAction = useMemo(
     () => <AddProjectPickerAction onPress={project.onAddProject} />,
     [project.onAddProject],
@@ -1452,6 +1559,32 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
     </View>
   ) : null;
 
+  const containerBackendControl = containerBackend.canShow ? (
+    <View>
+      <ContainerBackendPickerTrigger
+        pickerAnchorRef={containerBackend.anchorRef}
+        onPress={containerBackend.open}
+        disabled={isPending}
+        badgePressableStyle={badgePressableStyle}
+        containerBackend={containerBackend.value}
+        label={containerBackendTriggerLabel}
+        iconColor={theme.colors.foregroundMuted}
+        iconSize={theme.iconSize.sm}
+      />
+      <Combobox
+        options={containerBackend.options}
+        value={containerBackend.value}
+        onSelect={containerBackend.onSelect}
+        title={t("workspaceSetup.containerBackend.label")}
+        open={containerBackend.openState}
+        onOpenChange={containerBackend.onOpenChange}
+        desktopPlacement="bottom-start"
+        anchorRef={containerBackend.anchorRef}
+        renderOption={containerBackend.renderOption}
+      />
+    </View>
+  ) : null;
+
   const baseControl = base.showRefPicker ? (
     <View>
       <RefPickerTrigger
@@ -1494,6 +1627,7 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
       ) : (
         <View style={styles.baseSpacer} />
       )}
+      {containerBackendControl ? <FormRow>{containerBackendControl}</FormRow> : null}
       {baseControl ? <FormRow>{baseControl}</FormRow> : <View style={styles.baseSpacer} />}
     </View>
   ) : (
@@ -1501,6 +1635,7 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
       {projectControl}
       {hostControl}
       {isolationControl}
+      {containerBackendControl}
       {baseControl}
     </View>
   );
@@ -1548,11 +1683,13 @@ export function NewWorkspaceScreen({
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const openAddProjectPicker = useOpenAddProject();
   const [isolationPickerOpen, setIsolationPickerOpen] = useState(false);
+  const [containerBackendPickerOpen, setContainerBackendPickerOpen] = useState(false);
   const [pickerSearchQuery, setPickerSearchQuery] = useState("");
   const [debouncedPickerSearchQuery, setDebouncedPickerSearchQuery] = useState("");
   const pickerAnchorRef = useRef<View>(null);
   const projectPickerAnchorRef = useRef<View>(null);
   const isolationPickerAnchorRef = useRef<View>(null);
+  const containerBackendPickerAnchorRef = useRef<View>(null);
   const hostPickerAnchorRef = useRef<View | null>(null);
   const isDraftHandoffActive = useIsNewWorkspaceDraftHandoffActive({ draftId, selectedServerId });
 
@@ -1846,6 +1983,61 @@ export function NewWorkspaceScreen({
     [isPending, theme.colors.foregroundMuted, theme.iconSize.sm],
   );
 
+  const openContainerBackendPicker = useCallback(() => {
+    setContainerBackendPickerOpen(true);
+  }, []);
+
+  const handleContainerBackendPickerOpenChange = useCallback((nextOpen: boolean) => {
+    setContainerBackendPickerOpen(nextOpen);
+  }, []);
+
+  // "Dev Container" is omitted entirely (not disabled) when docker is
+  // unavailable or no devcontainer.json exists, since it's impossible to
+  // use a dev container without those prerequisites.
+  const containerBackendOptions = useMemo<ComboboxOptionType[]>(() => {
+    const hostOption = { id: "host", label: containerBackendLabel(t, "host") };
+    if (!containerAvailability?.dockerAvailable || !containerAvailability?.hasDevContainerConfig) {
+      return [hostOption];
+    }
+    return [hostOption, { id: "devcontainer", label: containerBackendLabel(t, "devcontainer") }];
+  }, [containerAvailability, t]);
+
+  const handleSelectContainerBackendOption = useCallback(
+    (id: string) => {
+      setContainerBackend(id === "devcontainer" ? "devcontainer" : "host");
+      setContainerBackendPickerOpen(false);
+    },
+    [setContainerBackend],
+  );
+
+  const renderContainerBackendOption = useCallback(
+    ({
+      option,
+      selected,
+      active,
+      onPress,
+    }: {
+      option: ComboboxOptionType;
+      selected: boolean;
+      active: boolean;
+      onPress: () => void;
+    }) => {
+      return (
+        <ContainerBackendOptionItem
+          optionId={option.id}
+          label={option.label}
+          selected={selected}
+          active={active}
+          disabled={isPending}
+          onPress={onPress}
+          iconColor={theme.colors.foregroundMuted}
+          iconSize={theme.iconSize.sm}
+        />
+      );
+    },
+    [isPending, theme.colors.foregroundMuted, theme.iconSize.sm],
+  );
+
   const handleClearDraft = useCallback(() => {
     // No-op: screen navigates away on success, text should stay for retry on error
   }, []);
@@ -2100,6 +2292,17 @@ export function NewWorkspaceScreen({
       renderOption: renderIsolationOption,
       canCreateWorktree,
     },
+    containerBackend: {
+      anchorRef: containerBackendPickerAnchorRef,
+      open: openContainerBackendPicker,
+      value: containerBackend,
+      options: containerBackendOptions,
+      onSelect: handleSelectContainerBackendOption,
+      openState: containerBackendPickerOpen,
+      onOpenChange: handleContainerBackendPickerOpenChange,
+      renderOption: renderContainerBackendOption,
+      canShow: containerAvailability !== null,
+    },
     base: {
       anchorRef: pickerAnchorRef,
       open: openPicker,
@@ -2130,14 +2333,6 @@ export function NewWorkspaceScreen({
             <Text style={styles.composerTitle}>{t("newWorkspace.title")}</Text>
           </View>
           {formStack}
-          {containerAvailability ? (
-            <ContainerBackendSelector
-              value={containerBackend}
-              dockerAvailable={containerAvailability.dockerAvailable}
-              hasDevContainerConfig={containerAvailability.hasDevContainerConfig}
-              onChange={setContainerBackend}
-            />
-          ) : null}
           <Composer
             externalKeyboardShift
             agentId={draftKey}
