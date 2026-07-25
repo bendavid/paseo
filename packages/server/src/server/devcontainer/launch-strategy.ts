@@ -28,6 +28,7 @@ export interface LaunchSpawnOptions {
   envMode?: "external" | "internal";
   shell?: boolean | string;
   stdio?: SpawnOptions["stdio"];
+  detached?: boolean;
 }
 
 /** The command and args to actually execute, possibly wrapped in an exec call. */

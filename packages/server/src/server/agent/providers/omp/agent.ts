@@ -475,6 +475,7 @@ function buildResumeStartInput(input: {
       input.resumeConfig.config.systemPrompt,
       input.resumeConfig.config.daemonAppendSystemPrompt,
     ),
+    launchStrategy: input.launchContext?.launchStrategy,
   };
 }
 
@@ -2262,6 +2263,7 @@ export class OmpAgentClient implements AgentClient {
       extraArgs: launchMode.extraArgs,
       systemPrompt: composeSystemPromptParts(config.systemPrompt, config.daemonAppendSystemPrompt),
       env: launchContext?.env,
+      launchStrategy: launchContext?.launchStrategy,
     });
     try {
       await this.configureNativePaseoTools(runtimeSession, launchContext?.paseoTools);

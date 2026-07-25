@@ -35,6 +35,7 @@ import {
   type ProviderCatalog,
 } from "../agent-sdk-types.js";
 import { importSessionFromPersistence } from "../provider-session-import.js";
+import type { ProcessLaunchStrategy } from "../../devcontainer/launch-strategy.js";
 import type { Logger } from "pino";
 
 import type { ChildProcess, ChildProcessWithoutNullStreams } from "node:child_process";
@@ -6276,7 +6277,7 @@ export class CodexAppServerAgentClient implements AgentClient {
 
   private async spawnAppServer(
     launchEnv?: Record<string, string>,
-    options?: { goalsEnabled?: boolean; agentId?: string },
+    options?: { goalsEnabled?: boolean; agentId?: string; launchStrategy?: ProcessLaunchStrategy },
   ): Promise<ChildProcessWithoutNullStreams> {
     const launchPrefix = await resolveCodexLaunchPrefix(this.runtimeSettings);
     const args = [...launchPrefix.args, "app-server"];
@@ -6292,14 +6293,23 @@ export class CodexAppServerAgentClient implements AgentClient {
       },
       "provider.codex.spawn",
     );
-    const child = spawnProcess(launchPrefix.command, args, {
-      detached: process.platform !== "win32",
-      stdio: ["pipe", "pipe", "pipe"],
-      ...createProviderEnvSpec({
-        runtimeSettings: this.runtimeSettings,
-        overlays: [launchEnv],
-      }),
-    });
+    const child = options?.launchStrategy
+      ? options.launchStrategy.spawn(launchPrefix.command, args, {
+          detached: process.platform !== "win32",
+          stdio: ["pipe", "pipe", "pipe"],
+          ...createProviderEnvSpec({
+            runtimeSettings: this.runtimeSettings,
+            overlays: [launchEnv],
+          }),
+        })
+      : spawnProcess(launchPrefix.command, args, {
+          detached: process.platform !== "win32",
+          stdio: ["pipe", "pipe", "pipe"],
+          ...createProviderEnvSpec({
+            runtimeSettings: this.runtimeSettings,
+            overlays: [launchEnv],
+          }),
+        });
     assertChildWithPipes(child);
     return child;
   }
@@ -6324,7 +6334,11 @@ export class CodexAppServerAgentClient implements AgentClient {
       null,
       this.logger,
       () =>
-        this.spawnAppServer(launchContext?.env, { goalsEnabled, agentId: launchContext?.agentId }),
+        this.spawnAppServer(launchContext?.env, {
+          goalsEnabled,
+          agentId: launchContext?.agentId,
+          launchStrategy: launchContext?.launchStrategy,
+        }),
       this.sessionDeps(),
       options?.persistSession === false,
       goalsEnabled,
@@ -6355,7 +6369,11 @@ export class CodexAppServerAgentClient implements AgentClient {
       handle,
       this.logger,
       () =>
-        this.spawnAppServer(launchContext?.env, { goalsEnabled, agentId: launchContext?.agentId }),
+        this.spawnAppServer(launchContext?.env, {
+          goalsEnabled,
+          agentId: launchContext?.agentId,
+          launchStrategy: launchContext?.launchStrategy,
+        }),
       this.sessionDeps(),
       false,
       goalsEnabled,
