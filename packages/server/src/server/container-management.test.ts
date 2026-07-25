@@ -35,6 +35,7 @@ import type {
   ExecutionHandle,
 } from "./devcontainer/container-backend.js";
 import { createDevContainerBackend, createLaunchStrategyRegistry } from "./devcontainer/index.js";
+import { createContainerBackendRegistry } from "./devcontainer/container-backend-registry.js";
 import {
   ContainerExecLaunchStrategy,
   LocalLaunchStrategy,
@@ -215,7 +216,7 @@ function createContainerTestSession(options: {
     tts: null,
     providerSnapshotManager: createProviderSnapshotManagerStub().manager,
     terminalManager: null,
-    containerBackend: options.backend,
+    containerBackends: createContainerBackendRegistry([options.backend]),
     launchStrategyRegistry,
   });
 
@@ -299,7 +300,7 @@ test("describeWorkspaceRecord does not start container when containerBackend is 
 
   const session = createContainerTestSession({
     backend,
-    workspaces: [makeWorkspace({ cwd, containerBackend: "host" })],
+    workspaces: [makeWorkspace({ cwd, containerBackend: null })],
     emitted,
   });
 
@@ -307,7 +308,7 @@ test("describeWorkspaceRecord does not start container when containerBackend is 
     describeWorkspaceRecord: (workspace: PersistedWorkspaceRecord) => Promise<unknown>;
   }>(session);
 
-  const workspace = makeWorkspace({ cwd, containerBackend: "host" });
+  const workspace = makeWorkspace({ cwd, containerBackend: null });
   await internals.describeWorkspaceRecord(workspace);
 
   expect(upSpy).not.toHaveBeenCalled();
@@ -454,7 +455,7 @@ test("host backend does not get container even if another workspace with same cw
     backend,
     workspaces: [
       makeWorkspace({ workspaceId: "ws-dev", cwd, containerBackend: "devcontainer" }),
-      makeWorkspace({ workspaceId: "ws-host", cwd, containerBackend: "host" }),
+      makeWorkspace({ workspaceId: "ws-host", cwd, containerBackend: null }),
     ],
     emitted,
   });
@@ -474,7 +475,7 @@ test("host backend does not get container even if another workspace with same cw
   await internals.describeWorkspaceRecord(devWs);
 
   // Now describe the host workspace — it should not have containerStatus
-  const hostWs = makeWorkspace({ workspaceId: "ws-host", cwd, containerBackend: "host" });
+  const hostWs = makeWorkspace({ workspaceId: "ws-host", cwd, containerBackend: null });
   const hostDescriptor = await internals.describeWorkspaceRecord(hostWs);
 
   expect(hostDescriptor.containerStatus).toBeUndefined();
@@ -591,8 +592,9 @@ test("container.availability.request returns docker availability and config dete
   const response = emitted.find((m) => m.type === "container.availability.response");
   expect(response).toBeDefined();
   if (response && response.type === "container.availability.response") {
-    expect(response.payload.dockerAvailable).toBe(true);
-    expect(response.payload.hasDevContainerConfig).toBe(true);
+    expect(response.payload.backends).toEqual([
+      { id: "devcontainer", label: "devcontainer", available: true, hasConfig: true },
+    ]);
   }
 });
 
@@ -606,7 +608,7 @@ test("container.availability.request returns false when docker unavailable and n
 
   const session = createContainerTestSession({
     backend,
-    workspaces: [makeWorkspace({ cwd, containerBackend: "host" })],
+    workspaces: [makeWorkspace({ cwd, containerBackend: null })],
     emitted,
   });
 
@@ -627,8 +629,9 @@ test("container.availability.request returns false when docker unavailable and n
   const response = emitted.find((m) => m.type === "container.availability.response");
   expect(response).toBeDefined();
   if (response && response.type === "container.availability.response") {
-    expect(response.payload.dockerAvailable).toBe(false);
-    expect(response.payload.hasDevContainerConfig).toBe(false);
+    expect(response.payload.backends).toEqual([
+      { id: "devcontainer", label: "devcontainer", available: false, hasConfig: false },
+    ]);
   }
 });
 
@@ -798,7 +801,7 @@ test("awaitStrategy returns local strategy for host workspace", async () => {
 
   const session = createContainerTestSession({
     backend,
-    workspaces: [makeWorkspace({ cwd, containerBackend: "host" })],
+    workspaces: [makeWorkspace({ cwd, containerBackend: null })],
     emitted,
   });
 
@@ -806,7 +809,7 @@ test("awaitStrategy returns local strategy for host workspace", async () => {
     describeWorkspaceRecord: (workspace: PersistedWorkspaceRecord) => Promise<unknown>;
   }>(session);
 
-  const workspace = makeWorkspace({ cwd, containerBackend: "host" });
+  const workspace = makeWorkspace({ cwd, containerBackend: null });
   await internals.describeWorkspaceRecord(workspace);
   await flushMicrotasks();
 
@@ -913,7 +916,7 @@ test("resolveLaunchStrategy returns null for host workspace (agents run on host)
 
   const session = createContainerTestSession({
     backend,
-    workspaces: [makeWorkspace({ cwd, containerBackend: "host" })],
+    workspaces: [makeWorkspace({ cwd, containerBackend: null })],
     emitted,
   });
 
@@ -922,7 +925,7 @@ test("resolveLaunchStrategy returns null for host workspace (agents run on host)
     launchStrategyRegistry: { hasContainerStrategy: (cwd: string) => boolean };
   }>(session);
 
-  const workspace = makeWorkspace({ cwd, containerBackend: "host" });
+  const workspace = makeWorkspace({ cwd, containerBackend: null });
   await internals.describeWorkspaceRecord(workspace);
   await flushMicrotasks();
 

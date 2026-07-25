@@ -98,7 +98,7 @@ import {
   sendBoundedPhysicalFrame,
 } from "./websocket/physical-socket.js";
 import type { LaunchStrategyRegistry } from "./devcontainer/launch-strategy-registry.js";
-import type { ContainerBackend } from "./devcontainer/container-backend.js";
+import type { ContainerBackendRegistry } from "./devcontainer/container-backend-registry.js";
 
 const WS_CLOSE_DAEMON_AUTH_FAILED = 4401;
 export interface ExternalSocketMetadata {
@@ -548,7 +548,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly browserToolsRegistrations = new Map<string, BrowserToolsRegistration>();
   private readonly devContainerAvailable: boolean;
   private readonly launchStrategyRegistry: LaunchStrategyRegistry | null;
-  private readonly containerBackend: ContainerBackend | null;
+  private readonly containerBackends: ContainerBackendRegistry | null;
   private acceptingConnections = true;
 
   constructor(
@@ -597,7 +597,7 @@ export class VoiceAssistantWebSocketServer {
     hubRelationships?: HubRelationshipManagement | null,
     devContainerAvailable?: boolean,
     launchStrategyRegistry?: LaunchStrategyRegistry,
-    containerBackend?: ContainerBackend,
+    containerBackends?: ContainerBackendRegistry,
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.serverId = serverId;
@@ -610,7 +610,7 @@ export class VoiceAssistantWebSocketServer {
     this.hubRelationships = hubRelationships ?? null;
     this.devContainerAvailable = devContainerAvailable ?? false;
     this.launchStrategyRegistry = launchStrategyRegistry ?? null;
-    this.containerBackend = containerBackend ?? null;
+    this.containerBackends = containerBackends ?? null;
     this.agentManager = agentManager;
     this.agentStorage = agentStorage;
     this.projectRegistry = projectRegistry ?? createNoopProjectRegistry();
@@ -1319,7 +1319,7 @@ export class VoiceAssistantWebSocketServer {
       serviceProxy: this.serviceProxy ?? undefined,
       scriptRuntimeStore: this.scriptRuntimeStore ?? undefined,
       launchStrategyRegistry: this.launchStrategyRegistry ?? undefined,
-      containerBackend: this.containerBackend ?? undefined,
+      containerBackends: this.containerBackends ?? undefined,
       workspaceSetupSnapshots: this.workspaceSetupSnapshots,
       onBranchChanged: this.onBranchChanged ?? undefined,
       getDaemonTcpPort: this.getDaemonTcpPort ?? undefined,

@@ -845,7 +845,8 @@ export const WorkspacePinSetRequestSchema = z.object({
 export const WorkspaceContainerBackendSetRequestSchema = z.object({
   type: z.literal("workspace.container_backend.set.request"),
   workspaceId: z.string(),
-  containerBackend: z.enum(["host", "devcontainer"]),
+  // null means "host" (no isolation). Any other string is a registered backend id.
+  containerBackend: z.string().nullable(),
   requestId: z.string(),
 });
 
@@ -1306,8 +1307,8 @@ export const RefreshProvidersSnapshotRequestMessageSchema = z.object({
   // COMPAT(devContainers): added in v0.2.0. Overrides the workspace's
   // containerBackend for this refresh — used by the new-workspace screen
   // where the workspace doesn't exist yet. Absent means use the workspace's
-  // persisted containerBackend (or "host" for global scope).
-  containerBackend: z.enum(["host", "devcontainer"]).optional(),
+  // persisted containerBackend (or null for global scope / host).
+  containerBackend: z.string().nullable().optional(),
   requestId: z.string(),
 });
 
@@ -1565,7 +1566,8 @@ export const WorkspaceContainerBackendSetResponsePayloadSchema = z.object({
   requestId: z.string(),
   workspaceId: z.string(),
   accepted: z.boolean(),
-  containerBackend: z.enum(["host", "devcontainer"]).nullable(),
+  // null means "host" (no isolation); otherwise a registered backend id.
+  containerBackend: z.string().nullable(),
   error: z.string().nullable(),
 });
 
@@ -2107,7 +2109,7 @@ export const WorkspaceCreateRequestSchema = z.object({
   ]),
   // COMPAT(devContainers): added in v0.2.0. The selected container backend for
   // this workspace. Absent means "host" (old clients).
-  containerBackend: z.enum(["host", "devcontainer"]).optional(),
+  containerBackend: z.string().nullable().optional(),
 });
 
 export const WorkspaceClearAttentionRequestSchema = z.object({
@@ -2507,8 +2509,16 @@ export const ContainerAvailabilityResponseSchema = z.object({
   type: z.literal("container.availability.response"),
   payload: z.object({
     requestId: z.string(),
-    dockerAvailable: z.boolean(),
-    hasDevContainerConfig: z.boolean(),
+    // Registered container backends with their availability and per-cwd config
+    // state, so the client can render a dynamic backend selector.
+    backends: z.array(
+      z.object({
+        id: z.string(),
+        label: z.string(),
+        available: z.boolean(),
+        hasConfig: z.boolean(),
+      }),
+    ),
   }),
 });
 
@@ -3229,7 +3239,7 @@ export const WorkspaceDescriptorPayloadSchema = z
     project: ProjectPlacementPayloadSchema.optional(),
     // COMPAT(devContainers): added in v0.2.0, remove gate after 2027-07-22.
     // The selected container backend for this workspace. Absent means "host".
-    containerBackend: z.enum(["host", "devcontainer"]).nullish().optional(),
+    containerBackend: z.string().nullable().optional(),
     // COMPAT(devContainers): added in v0.2.0, remove gate after 2027-07-22.
     // Whether this workspace is running inside an isolated execution environment
     // (dev container, pod, VM, etc.). Absent means local execution (old daemons).

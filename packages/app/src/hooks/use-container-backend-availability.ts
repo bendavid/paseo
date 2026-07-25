@@ -1,11 +1,17 @@
 import { useEffect, useState } from "react";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 
-export type ContainerBackend = "host" | "devcontainer";
+export type ContainerBackend = string | null;
+
+export interface AvailableBackendInfo {
+  id: string;
+  label: string;
+  available: boolean;
+  hasConfig: boolean;
+}
 
 export interface ContainerAvailability {
-  dockerAvailable: boolean;
-  hasDevContainerConfig: boolean;
+  backends: AvailableBackendInfo[];
 }
 
 export function useContainerBackendAvailability(
@@ -16,7 +22,7 @@ export function useContainerBackendAvailability(
   setContainerBackend: (value: ContainerBackend) => void;
   containerAvailability: ContainerAvailability | null;
 } {
-  const [containerBackend, setContainerBackend] = useState<ContainerBackend>("host");
+  const [containerBackend, setContainerBackend] = useState<ContainerBackend>(null);
   const [containerAvailability, setContainerAvailability] = useState<ContainerAvailability | null>(
     null,
   );
@@ -24,7 +30,7 @@ export function useContainerBackendAvailability(
   useEffect(() => {
     if (!client || !sourceDirectory) {
       setContainerAvailability(null);
-      setContainerBackend("host");
+      setContainerBackend(null);
       return;
     }
     let cancelled = false;
@@ -33,11 +39,14 @@ export function useContainerBackendAvailability(
       .then((result) => {
         if (cancelled) return;
         setContainerAvailability({
-          dockerAvailable: result.dockerAvailable,
-          hasDevContainerConfig: result.hasDevContainerConfig,
+          backends: result.backends,
         });
-        if (result.dockerAvailable && result.hasDevContainerConfig) {
-          setContainerBackend("devcontainer");
+        // Default to the first available backend that has a config for this cwd.
+        const defaultBackend = result.backends.find(
+          (backend) => backend.available && backend.hasConfig,
+        );
+        if (defaultBackend) {
+          setContainerBackend(defaultBackend.id);
         }
         return undefined;
       })

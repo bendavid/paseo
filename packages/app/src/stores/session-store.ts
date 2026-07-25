@@ -144,7 +144,7 @@ export interface WorkspaceDescriptor {
   gitRuntime?: WorkspaceDescriptorPayload["gitRuntime"];
   githubRuntime?: WorkspaceDescriptorPayload["githubRuntime"];
   forge?: WorkspaceDescriptorPayload["forge"];
-  containerBackend?: WorkspaceDescriptorPayload["containerBackend"];
+  containerBackend?: string | null;
   containerStatus?: WorkspaceDescriptorPayload["containerStatus"];
   hasDevContainerConfig?: WorkspaceDescriptorPayload["hasDevContainerConfig"];
   containerInfo?: WorkspaceDescriptorPayload["containerInfo"];

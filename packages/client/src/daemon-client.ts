@@ -2570,9 +2570,9 @@ export class DaemonClient {
 
   async setWorkspaceContainerBackend(
     workspaceId: string,
-    containerBackend: "host" | "devcontainer",
+    containerBackend: string | null,
     requestId?: string,
-  ): Promise<{ containerBackend: "host" | "devcontainer" }> {
+  ): Promise<{ containerBackend: string | null }> {
     const payload = await this.sendCorrelatedSessionRequest({
       requestId,
       message: {
@@ -2582,7 +2582,7 @@ export class DaemonClient {
       },
       responseType: "workspace.container_backend.set.response",
     });
-    if (!payload.accepted || !payload.containerBackend) {
+    if (!payload.accepted) {
       throw new Error(payload.error ?? "setWorkspaceContainerBackend rejected");
     }
     return { containerBackend: payload.containerBackend };
@@ -3994,7 +3994,7 @@ export class DaemonClient {
       source: WorkspaceCreateRequest["source"];
       title?: string;
       firstAgentContext?: WorkspaceCreateRequest["firstAgentContext"];
-      containerBackend?: "host" | "devcontainer";
+      containerBackend?: string | null;
     },
     requestId?: string,
   ): Promise<WorkspaceCreatePayload> {
@@ -4500,7 +4500,7 @@ export class DaemonClient {
   async refreshProvidersSnapshot(options?: {
     cwd?: string;
     providers?: AgentProvider[];
-    containerBackend?: "host" | "devcontainer";
+    containerBackend?: string | null;
     requestId?: string;
   }): Promise<RefreshProvidersSnapshotPayload> {
     return this.sendCorrelatedSessionRequest({

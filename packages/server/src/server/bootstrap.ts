@@ -127,6 +127,7 @@ import type { LocalSpeechProviderConfig } from "./speech/providers/local/config.
 import type { RequestedSpeechProviders } from "./speech/speech-types.js";
 import { createSpeechService } from "./speech/speech-runtime.js";
 import { createDevContainerBackend, createLaunchStrategyRegistry } from "./devcontainer/index.js";
+import { createContainerBackendRegistry } from "./devcontainer/container-backend-registry.js";
 import { runGitCommand, type GitCommandOptions } from "../utils/run-git-command.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import { AgentStorage } from "./agent/agent-storage.js";
@@ -589,8 +590,8 @@ export async function createPaseoDaemon(
   // flag so clients can gate container UI on daemon capability.
   // Currently only the devcontainer backend (devcontainer CLI + Docker) is
   // supported, but the architecture is pluggable: swap createDevContainerBackend
-  // for a different ContainerBackend implementation to support Podman, K8s, etc.
   const containerBackend = createDevContainerBackend({ logger });
+  const containerBackends = createContainerBackendRegistry([containerBackend]);
   const launchStrategyRegistry = createLaunchStrategyRegistry({
     logger,
     createStrategy: containerBackend.createStrategy,
@@ -842,7 +843,7 @@ export async function createPaseoDaemon(
       if (!launchStrategyRegistry) return null;
       // Use the override if provided (new-workspace screen where the
       // workspace doesn't exist yet). Otherwise look up the workspace.
-      let backend: "host" | "devcontainer" | undefined = containerBackendOverride;
+      let backend: string | null | undefined = containerBackendOverride;
       if (!backend) {
         const workspaces = await workspaceRegistry?.list();
         const workspaceId = workspaces ? resolveWorkspaceIdForPath(cwd, workspaces) : null;
@@ -851,7 +852,7 @@ export async function createPaseoDaemon(
           backend = workspace?.containerBackend;
         }
       }
-      if (backend === "host") return null;
+      if (!backend) return null;
       // Strict: workspace-scoped catalog refresh must use the container's
       // tool, not the host's. Throws if the container isn't running — the
       // error surfaces in the snapshot entry.
@@ -884,7 +885,7 @@ export async function createPaseoDaemon(
       }
       if (workspaceId) {
         const workspace = await workspaceRegistry?.get(workspaceId);
-        if (workspace?.containerBackend === "host") return null;
+        if (!workspace?.containerBackend) return null;
       }
       // awaitStrategy throws if the container fails to start. If it returns
       // a non-isolated strategy, the container hasn't started yet — treat
@@ -1646,7 +1647,7 @@ export async function createPaseoDaemon(
               hubRelationships,
               devContainerAvailable,
               launchStrategyRegistry,
-              containerBackend,
+              containerBackends,
             );
             await hubRelationships.start();
 

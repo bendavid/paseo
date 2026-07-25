@@ -39,7 +39,7 @@ export async function refreshAndApplyProvidersSnapshot(input: {
   serverId: string;
   cwd: string | null;
   providers?: AgentProvider[];
-  containerBackend?: "host" | "devcontainer";
+  containerBackend?: string | null;
 }): Promise<RefreshProvidersSnapshotResult> {
   const refreshResult = await input.client.refreshProvidersSnapshot(
     providersSnapshotRequestOptions({

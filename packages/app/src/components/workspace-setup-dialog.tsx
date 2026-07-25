@@ -92,7 +92,7 @@ async function callWorkspaceCreation({
 }: {
   creationMethod: "create_worktree" | "open_project";
   connectedClient: DaemonClient;
-  input: { cwd: string; containerBackend: "host" | "devcontainer" };
+  input: { cwd: string; containerBackend: string | null };
 }) {
   if (creationMethod === "create_worktree") {
     return connectedClient.createPaseoWorktree({
@@ -462,8 +462,7 @@ export function WorkspaceSetupDialog() {
       {containerAvailability ? (
         <ContainerBackendSelector
           value={containerBackend}
-          dockerAvailable={containerAvailability.dockerAvailable}
-          hasDevContainerConfig={containerAvailability.hasDevContainerConfig}
+          backends={containerAvailability.backends}
           onChange={setContainerBackend}
         />
       ) : null}

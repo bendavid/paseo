@@ -21,7 +21,7 @@ export function providersSnapshotQueryKey(serverId: string | null, cwd?: string 
 export function providersSnapshotRequestOptions(input: {
   cwd?: string | null;
   providers?: AgentProvider[];
-  containerBackend?: "host" | "devcontainer";
+  containerBackend?: string | null;
 }) {
   const normalizedCwd = normalizeProvidersSnapshotCwd(input.cwd);
   return {

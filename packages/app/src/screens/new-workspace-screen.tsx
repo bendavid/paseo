@@ -426,10 +426,10 @@ function IsolationOptionItem({
   );
 }
 
-function containerBackendLabel(t: TFunction, backend: "host" | "devcontainer"): string {
-  return backend === "devcontainer"
-    ? t("workspaceSetup.containerBackend.devcontainer")
-    : t("workspaceSetup.containerBackend.host");
+function containerBackendLabel(t: TFunction, backend: string | null): string {
+  return backend === null
+    ? t("workspaceSetup.containerBackend.host")
+    : t("workspaceSetup.containerBackend.devcontainer");
 }
 
 function ContainerBackendOptionItem({
@@ -454,10 +454,10 @@ function ContainerBackendOptionItem({
   const leadingSlot = useMemo(
     () => (
       <View style={styles.rowIconBox}>
-        {optionId === "devcontainer" ? (
-          <Container size={iconSize} color={iconColor} />
-        ) : (
+        {optionId === "host" ? (
           <Folder size={iconSize} color={iconColor} />
+        ) : (
+          <Container size={iconSize} color={iconColor} />
         )}
       </View>
     ),
@@ -752,7 +752,7 @@ function ContainerBackendPickerTrigger({
   onPress: () => void;
   disabled: boolean;
   badgePressableStyle: React.ComponentProps<typeof Pressable>["style"];
-  containerBackend: "host" | "devcontainer";
+  containerBackend: string | null;
   label: string;
   iconColor: string;
   iconSize: number;
@@ -768,10 +768,10 @@ function ContainerBackendPickerTrigger({
       accessibilityLabel="Container backend"
     >
       <View style={styles.badgeIconBox}>
-        {containerBackend === "devcontainer" ? (
-          <Container size={iconSize} color={iconColor} />
-        ) : (
+        {containerBackend === null ? (
           <Folder size={iconSize} color={iconColor} />
+        ) : (
+          <Container size={iconSize} color={iconColor} />
         )}
       </View>
       <Text style={styles.badgeText} numberOfLines={1}>
@@ -921,7 +921,7 @@ async function createMultiplicityWorkspace(input: {
   ) => void;
   serverId: string;
   createFailedMessage: string;
-  containerBackend: "host" | "devcontainer";
+  containerBackend: string | null;
 }): Promise<ReturnType<typeof normalizeWorkspaceDescriptor>> {
   const isWorktree = input.isolation === "worktree";
   const checkoutRequest = isWorktree
@@ -1422,7 +1422,7 @@ interface NewWorkspaceFormStackInput {
     canCreateWorktree: boolean;
   };
   containerBackend: FormPickerControl & {
-    value: "host" | "devcontainer";
+    value: string | null;
     options: ComboboxOptionType[];
     onSelect: (id: string) => void;
     renderOption: RefPickerRenderOption;
@@ -1575,7 +1575,7 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
       />
       <Combobox
         options={containerBackend.options}
-        value={containerBackend.value}
+        value={containerBackend.value ?? "host"}
         onSelect={containerBackend.onSelect}
         title={t("workspaceSetup.containerBackend.label")}
         open={containerBackend.openState}
@@ -2008,20 +2008,24 @@ export function NewWorkspaceScreen({
     setContainerBackendPickerOpen(nextOpen);
   }, []);
 
-  // "Dev Container" is omitted entirely (not disabled) when docker is
-  // unavailable or no devcontainer.json exists, since it's impossible to
-  // use a dev container without those prerequisites.
+  // Host is always available. Each available backend that hasConfig is shown.
   const containerBackendOptions = useMemo<ComboboxOptionType[]>(() => {
-    const hostOption = { id: "host", label: containerBackendLabel(t, "host") };
-    if (!containerAvailability?.dockerAvailable || !containerAvailability?.hasDevContainerConfig) {
-      return [hostOption];
-    }
-    return [hostOption, { id: "devcontainer", label: containerBackendLabel(t, "devcontainer") }];
+    const hostOption = { id: "host", label: containerBackendLabel(t, null) };
+    const selectableBackends = (containerAvailability?.backends ?? []).filter(
+      (b) => b.available && b.hasConfig,
+    );
+    return [
+      hostOption,
+      ...selectableBackends.map((backend) => ({
+        id: backend.id,
+        label: backend.label,
+      })),
+    ];
   }, [containerAvailability, t]);
 
   const handleSelectContainerBackendOption = useCallback(
     (id: string) => {
-      setContainerBackend(id === "devcontainer" ? "devcontainer" : "host");
+      setContainerBackend(id === "host" ? null : id);
       setContainerBackendPickerOpen(false);
     },
     [setContainerBackend],

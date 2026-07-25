@@ -96,7 +96,7 @@ export interface ProviderSnapshotManagerOptions {
   diagnosticTimeoutMs?: number;
   resolveLaunchStrategy?: (
     cwd: string,
-    containerBackendOverride?: "host" | "devcontainer",
+    containerBackendOverride?: string | null,
   ) => Promise<ProcessLaunchStrategy | null>;
 }
 
@@ -104,7 +104,7 @@ interface ProviderSnapshotRefreshOptions {
   cwd: string;
   providers?: AgentProvider[];
   /** Overrides the workspace's containerBackend for this refresh. */
-  containerBackend?: "host" | "devcontainer";
+  containerBackend?: string | null;
 }
 
 interface ProviderSnapshotWarmUpOptions {
@@ -166,7 +166,7 @@ interface ProviderLoadOptions {
   catalogScope: ProviderCatalogScope;
   force: boolean;
   /** Overrides the workspace's containerBackend for this load. */
-  containerBackend?: "host" | "devcontainer";
+  containerBackend?: string | null;
 }
 interface ProviderLoad {
   promise: Promise<void>;
@@ -188,7 +188,7 @@ export class ProviderSnapshotManager {
   private readonly diagnosticTimeoutMs: number;
   private readonly resolveLaunchStrategy?: (
     cwd: string,
-    containerBackendOverride?: "host" | "devcontainer",
+    containerBackendOverride?: string | null,
   ) => Promise<ProcessLaunchStrategy | null>;
   private readonly logger: Logger;
   private readonly workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">;
@@ -651,7 +651,7 @@ export class ProviderSnapshotManager {
   private async refreshProviders(
     target: ProviderSnapshotTarget,
     providers: AgentProvider[],
-    containerBackend?: "host" | "devcontainer",
+    containerBackend?: string | null,
   ): Promise<void> {
     await this.loadProviders({
       snapshotCwd: target.snapshotCwd,
@@ -774,7 +774,7 @@ export class ProviderSnapshotManager {
     definition: ProviderDefinition;
     load: ProviderLoad;
     force: boolean;
-    containerBackend?: "host" | "devcontainer";
+    containerBackend?: string | null;
   }): Promise<void> {
     const { snapshotCwd, catalogScope, provider, definition, load, force } = options;
     const snapshot = this.getOrCreateSnapshot(snapshotCwd);
