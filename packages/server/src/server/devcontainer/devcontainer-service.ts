@@ -42,7 +42,9 @@ export function createDevContainerBackend(
   const devcontainerBin = deps.binaryPath ?? resolveDevContainerBinary();
   const dockerBin = deps.dockerBinaryPath ?? "docker";
 
-  // Per-workspace handles, keyed by resolved workspace folder path.
+  // Per-workspace handles, keyed by the opaque workspace key (workspaceId
+  // or a synthetic probe key). The workspaceFolder is still used for CLI
+  // args and config discovery, but is no longer the map key.
   const handles = new Map<string, ExecutionHandle>();
   let availabilityCache: boolean | null = null;
 
@@ -78,22 +80,21 @@ export function createDevContainerBackend(
     return discoverDevContainerConfig(workspaceFolder) !== null;
   }
 
-  function getHandle(workspaceFolder: string): ExecutionHandle | null {
-    return handles.get(resolve(workspaceFolder)) ?? null;
+  function getHandle(key: string): ExecutionHandle | null {
+    return handles.get(key) ?? null;
   }
 
   async function up(options: ContainerUpOptions): Promise<ExecutionHandle> {
-    const workspaceFolder = resolve(options.workspaceFolder);
-    const existing = handles.get(workspaceFolder);
+    const existing = handles.get(options.key);
     if (existing) return existing;
-    return runUp(workspaceFolder, options, false);
+    return runUp(options, false);
   }
 
   async function runUp(
-    workspaceFolder: string,
     options: ContainerUpOptions,
     removeExisting: boolean,
   ): Promise<ExecutionHandle> {
+    const workspaceFolder = resolve(options.workspaceFolder);
     const config = discoverDevContainerConfig(workspaceFolder);
     if (!config) {
       throw new Error(`No devcontainer.json found in ${workspaceFolder}`);
@@ -148,7 +149,7 @@ export function createDevContainerBackend(
       remoteWorkspaceFolder: parsed.remoteWorkspaceFolder,
     };
 
-    handles.set(workspaceFolder, handle);
+    handles.set(options.key, handle);
     logger.info(
       { workspaceFolder, identifier: handle.identifier, remoteUser: handle.remoteUser },
       "Dev container started",
@@ -157,15 +158,11 @@ export function createDevContainerBackend(
     return handle;
   }
 
-  async function stop(workspaceFolder: string): Promise<void> {
-    const resolved = resolve(workspaceFolder);
-    const handle = handles.get(resolved);
+  async function stop(key: string): Promise<void> {
+    const handle = handles.get(key);
     if (!handle) return;
 
-    logger.info(
-      { workspaceFolder: resolved, identifier: handle.identifier },
-      "Stopping dev container",
-    );
+    logger.info({ key, identifier: handle.identifier }, "Stopping dev container");
 
     try {
       await execCommand(dockerBin, ["stop", handle.identifier], {
@@ -175,22 +172,26 @@ export function createDevContainerBackend(
     } catch (error) {
       logger.warn({ err: error, identifier: handle.identifier }, "Failed to stop dev container");
     } finally {
-      handles.delete(resolved);
+      handles.delete(key);
     }
   }
 
   async function restart(options: ContainerUpOptions): Promise<ExecutionHandle> {
-    const workspaceFolder = resolve(options.workspaceFolder);
-    await stop(workspaceFolder);
-    logger.info({ workspaceFolder }, "Restarting dev container");
-    return runUp(workspaceFolder, options, false);
+    await stop(options.key);
+    logger.info(
+      { key: options.key, workspaceFolder: options.workspaceFolder },
+      "Restarting dev container",
+    );
+    return runUp(options, false);
   }
 
   async function rebuild(options: ContainerUpOptions): Promise<ExecutionHandle> {
-    const workspaceFolder = resolve(options.workspaceFolder);
-    await stop(workspaceFolder);
-    logger.info({ workspaceFolder }, "Rebuilding dev container");
-    return runUp(workspaceFolder, options, true);
+    await stop(options.key);
+    logger.info(
+      { key: options.key, workspaceFolder: options.workspaceFolder },
+      "Rebuilding dev container",
+    );
+    return runUp(options, true);
   }
 
   function getConfigHash(workspaceFolder: string): string | null {
@@ -204,7 +205,10 @@ export function createDevContainerBackend(
     }
   }
 
-  async function isAlreadyRunning(workspaceFolder: string): Promise<boolean> {
+  async function isAlreadyRunning(key: string, workspaceFolder: string): Promise<boolean> {
+    // If we already have an in-memory handle for this key, the container is
+    // running from this session.
+    if (handles.has(key)) return true;
     const resolved = resolve(workspaceFolder);
     try {
       const result = await execCommand(
@@ -218,32 +222,13 @@ export function createDevContainerBackend(
     }
   }
 
-  async function getContainerInfo(workspaceFolder: string): Promise<ContainerInfo | null> {
-    const resolved = resolve(workspaceFolder);
-    // Find the container by the devcontainer label, not the in-memory handle.
-    // This works on daemon restart when handles is empty but the container is
-    // still running from a previous session.
-    let containerId: string;
-    const handle = handles.get(resolved);
-    if (handle) {
-      containerId = handle.identifier;
-    } else {
-      try {
-        const result = await execCommand(
-          dockerBin,
-          ["ps", "-q", "--filter", `label=devcontainer.local_folder=${resolved}`],
-          { envMode: "internal", timeout: 10_000 },
-        );
-        containerId = result.stdout.trim();
-        if (!containerId) return null;
-      } catch {
-        return null;
-      }
-    }
+  async function getContainerInfo(key: string): Promise<ContainerInfo | null> {
+    const handle = handles.get(key);
+    if (!handle) return null;
     try {
       const result = await execCommand(
         dockerBin,
-        ["inspect", "--format", "{{json .}}", containerId],
+        ["inspect", "--format", "{{json .}}", handle.identifier],
         { envMode: "internal", timeout: 10_000 },
       );
       const data = JSON.parse(result.stdout.trim()) as {
@@ -253,11 +238,11 @@ export function createDevContainerBackend(
       };
       return {
         backend: "devcontainer",
-        containerId: containerId.slice(0, 12),
-        containerName: data.Name?.replace(/^\//, "") ?? containerId.slice(0, 12),
+        containerId: handle.identifier.slice(0, 12),
+        containerName: data.Name?.replace(/^\//, "") ?? handle.identifier.slice(0, 12),
         image: data.Config?.Image ?? "unknown",
         startedAt: data.State?.StartedAt ?? new Date().toISOString(),
-        remoteUser: data.Config?.User || handle?.remoteUser || "root",
+        remoteUser: data.Config?.User || handle.remoteUser || "root",
       };
     } catch {
       return null;
@@ -269,7 +254,7 @@ export function createDevContainerBackend(
    * a Podman backend would use `podman exec`, a Kubernetes backend would
    * use `kubectl exec`, etc.
    */
-  const createStrategy: LaunchStrategyFactory = (workspaceFolder, handle) =>
+  const createStrategy: LaunchStrategyFactory = (_key, workspaceFolder, handle) =>
     new ContainerExecLaunchStrategy({
       handle,
       execCommand: dockerBin,

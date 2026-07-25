@@ -41,7 +41,15 @@ export interface ContainerInfo {
 }
 
 export interface ContainerUpOptions {
-  /** Host-side workspace folder (the bind-mount source) */
+  /**
+   * Opaque workspace key (workspaceId, or a synthetic `probe:<cwd>` key for
+   * probe containers). Backends use this as the handle-map key.
+   */
+  key: string;
+  /**
+   * Host-side workspace folder (the bind-mount source). Used to discover
+   * devcontainer.json and passed as `--workspace-folder` to the CLI.
+   */
   workspaceFolder: string;
   /** Called with each line of build/up output for progress reporting */
   onProgress?: (line: string) => void;
@@ -60,17 +68,21 @@ export interface ContainerBackend {
   /** Create and start an environment for the workspace, running lifecycle scripts */
   up(options: ContainerUpOptions): Promise<ExecutionHandle>;
 
-  /** Stop the environment for a workspace */
-  stop(workspaceFolder: string): Promise<void>;
+  /**
+   * Stop the environment for a workspace. `key` is the opaque workspace key
+   * (workspaceId or probe key) used to look up the in-memory handle.
+   */
+  stop(key: string): Promise<void>;
 
   /** Get the handle for a running environment, or null if not running */
-  getHandle(workspaceFolder: string): ExecutionHandle | null;
+  getHandle(key: string): ExecutionHandle | null;
 
   /**
    * Get metadata about the running container for display in the UI.
    * Returns null if no container is running or the info can't be retrieved.
+   * `key` is the opaque workspace key used to look up the in-memory handle.
    */
-  getContainerInfo(workspaceFolder: string): Promise<ContainerInfo | null>;
+  getContainerInfo(key: string): Promise<ContainerInfo | null>;
   /**
    * Restart the environment for a workspace — stop the running container and
    * start it again with the same config. Use this when the user wants to
@@ -94,7 +106,9 @@ export interface ContainerBackend {
   /**
    * Check whether a container is already running for this workspace (e.g.
    * from a previous daemon session). Used on startup to decide whether to
-   * reuse an existing container or start fresh.
+   * reuse an existing container or start fresh. `key` identifies the
+   * in-memory handle slot; `workspaceFolder` is the host-side path used to
+   * query the container runtime (e.g. via the devcontainer label).
    */
-  isAlreadyRunning(workspaceFolder: string): Promise<boolean>;
+  isAlreadyRunning(key: string, workspaceFolder: string): Promise<boolean>;
 }

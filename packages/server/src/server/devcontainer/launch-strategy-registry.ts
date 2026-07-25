@@ -1,4 +1,3 @@
-import { resolve } from "node:path";
 import type { Logger } from "pino";
 import type { ProcessLaunchStrategy } from "./launch-strategy.js";
 import { LocalLaunchStrategy } from "./launch-strategy.js";
@@ -8,8 +7,14 @@ import type { ExecutionHandle } from "./container-backend.js";
  * A factory that creates a ProcessLaunchStrategy for a given workspace
  * and execution handle. Backends provide this factory so the registry
  * remains backend-agnostic.
+ *
+ * `key` is the opaque workspace identifier (workspaceId, or a synthetic
+ * `probe:<cwd>` key for probe containers). `workspaceFolder` is the
+ * host-side path the backend needs to locate devcontainer.json and to
+ * pass as `--workspace-folder` to the CLI.
  */
 export type LaunchStrategyFactory = (
+  key: string,
   workspaceFolder: string,
   handle: ExecutionHandle,
 ) => ProcessLaunchStrategy;
@@ -23,6 +28,11 @@ export type LaunchStrategyFactory = (
  * the active backend and uses it to create strategies when environments
  * are activated. Adding a new backend does not require changing this registry.
  *
+ * Containers are keyed by an opaque `key` string (the workspaceId, or a
+ * synthetic `probe:<cwd>` key for short-lived probe containers) rather than
+ * by workspace folder. This lets two workspaces that share a cwd maintain
+ * independent containers, and keeps the registry free of path resolution.
+ *
  * When a container is starting (pending), `getStrategy` returns the local
  * strategy immediately, but `awaitStrategy` blocks until the container is
  * ready. Callers that need the container (agent spawn, terminal creation)
@@ -31,7 +41,7 @@ export type LaunchStrategyFactory = (
 
 export interface LaunchStrategyRegistry {
   /** Get the launch strategy for a workspace synchronously (local if no container) */
-  getStrategy(workspaceFolder: string): ProcessLaunchStrategy;
+  getStrategy(key: string): ProcessLaunchStrategy;
 
   /**
    * Get the launch strategy for a workspace, awaiting any pending container
@@ -39,32 +49,36 @@ export interface LaunchStrategyRegistry {
    * until it's ready and returns the container strategy. If no container is
    * pending or active, returns the local strategy immediately.
    */
-  awaitStrategy(workspaceFolder: string): Promise<ProcessLaunchStrategy>;
+  awaitStrategy(key: string): Promise<ProcessLaunchStrategy>;
 
-  /** Activate isolated execution for a workspace after the backend starts */
-  activateContainer(workspaceFolder: string, handle: ExecutionHandle): void;
+  /**
+   * Activate isolated execution for a workspace after the backend starts.
+   * `workspaceFolder` is forwarded to the strategy factory so the backend
+   * can build a strategy that knows the host-side path.
+   */
+  activateContainer(key: string, workspaceFolder: string, handle: ExecutionHandle): void;
 
   /**
    * Register a pending container activation. Callers awaiting the strategy
    * will block until `activateContainer` or `deactivateContainer` is called.
    */
-  registerPendingActivation(workspaceFolder: string): void;
+  registerPendingActivation(key: string): void;
 
   /** Deactivate isolated execution (e.g., when the environment is stopped) */
-  deactivateContainer(workspaceFolder: string): void;
+  deactivateContainer(key: string): void;
 
   /**
    * Resolve a pending activation without activating a container. Used when
    * the user denies container creation — blocked callers fall through to
    * the local strategy.
    */
-  resolvePendingActivation(workspaceFolder: string): void;
+  resolvePendingActivation(key: string): void;
 
   /** Check whether a workspace currently has an active isolated strategy */
-  hasContainerStrategy(workspaceFolder: string): boolean;
+  hasContainerStrategy(key: string): boolean;
 
   /** Check whether a workspace has a pending (in-flight) container activation */
-  isPendingActivation(workspaceFolder: string): boolean;
+  isPendingActivation(key: string): boolean;
 }
 
 interface PendingActivation {
@@ -84,23 +98,21 @@ export function createLaunchStrategyRegistry(deps: {
   const pendingActivations = new Map<string, PendingActivation>();
 
   return {
-    getStrategy(workspaceFolder: string): ProcessLaunchStrategy {
-      const resolved = resolve(workspaceFolder);
-      return isolatedStrategies.get(resolved) ?? localStrategy;
+    getStrategy(key: string): ProcessLaunchStrategy {
+      return isolatedStrategies.get(key) ?? localStrategy;
     },
 
-    async awaitStrategy(workspaceFolder: string): Promise<ProcessLaunchStrategy> {
-      const resolved = resolve(workspaceFolder);
-      const existing = isolatedStrategies.get(resolved);
+    async awaitStrategy(key: string): Promise<ProcessLaunchStrategy> {
+      const existing = isolatedStrategies.get(key);
       if (existing) return existing;
 
-      const pending = pendingActivations.get(resolved);
+      const pending = pendingActivations.get(key);
       if (pending) {
         // Wait for the container to finish starting. If it fails, propagate
         // the error so agent/terminal creation fails rather than silently
         // falling back to the host.
         await pending.promise;
-        const strategy = isolatedStrategies.get(resolved);
+        const strategy = isolatedStrategies.get(key);
         if (!strategy) {
           throw new Error("Container failed to start");
         }
@@ -110,59 +122,52 @@ export function createLaunchStrategyRegistry(deps: {
       return localStrategy;
     },
 
-    activateContainer(workspaceFolder: string, handle: ExecutionHandle): void {
-      const resolved = resolve(workspaceFolder);
-      logger.info(
-        { workspaceFolder: resolved, identifier: handle.identifier },
-        "Activating isolated launch strategy",
-      );
-      isolatedStrategies.set(resolved, deps.createStrategy(resolved, handle));
-      const pending = pendingActivations.get(resolved);
+    activateContainer(key: string, workspaceFolder: string, handle: ExecutionHandle): void {
+      logger.info({ key, identifier: handle.identifier }, "Activating isolated launch strategy");
+      isolatedStrategies.set(key, deps.createStrategy(key, workspaceFolder, handle));
+      const pending = pendingActivations.get(key);
       if (pending) {
         pending.resolve();
-        pendingActivations.delete(resolved);
+        pendingActivations.delete(key);
       }
     },
 
-    registerPendingActivation(workspaceFolder: string): void {
-      const resolved = resolve(workspaceFolder);
-      if (pendingActivations.has(resolved) || isolatedStrategies.has(resolved)) return;
+    registerPendingActivation(key: string): void {
+      if (pendingActivations.has(key) || isolatedStrategies.has(key)) return;
       let resolveFn: () => void = () => {};
       let rejectFn: (error: Error) => void = () => {};
       const promise = new Promise<void>((res, rej) => {
         resolveFn = res;
         rejectFn = rej;
       });
-      pendingActivations.set(resolved, { promise, resolve: resolveFn, reject: rejectFn });
+      pendingActivations.set(key, { promise, resolve: resolveFn, reject: rejectFn });
     },
 
-    deactivateContainer(workspaceFolder: string): void {
-      const resolved = resolve(workspaceFolder);
-      if (isolatedStrategies.delete(resolved)) {
-        logger.info({ workspaceFolder: resolved }, "Deactivated isolated launch strategy");
+    deactivateContainer(key: string): void {
+      if (isolatedStrategies.delete(key)) {
+        logger.info({ key }, "Deactivated isolated launch strategy");
       }
-      const pending = pendingActivations.get(resolved);
+      const pending = pendingActivations.get(key);
       if (pending) {
         pending.reject(new Error("Container activation was cancelled"));
-        pendingActivations.delete(resolved);
+        pendingActivations.delete(key);
       }
     },
 
-    resolvePendingActivation(workspaceFolder: string): void {
-      const resolved = resolve(workspaceFolder);
-      const pending = pendingActivations.get(resolved);
+    resolvePendingActivation(key: string): void {
+      const pending = pendingActivations.get(key);
       if (pending) {
         pending.resolve();
-        pendingActivations.delete(resolved);
+        pendingActivations.delete(key);
       }
     },
 
-    hasContainerStrategy(workspaceFolder: string): boolean {
-      return isolatedStrategies.has(resolve(workspaceFolder));
+    hasContainerStrategy(key: string): boolean {
+      return isolatedStrategies.has(key);
     },
 
-    isPendingActivation(workspaceFolder: string): boolean {
-      return pendingActivations.has(resolve(workspaceFolder));
+    isPendingActivation(key: string): boolean {
+      return pendingActivations.has(key);
     },
   };
 }

@@ -560,15 +560,15 @@ function describeRegistryTransition(record: ArchivedRecordSnapshot | null): Regi
 
 function resolveContainerStatus(
   registry: LaunchStrategyRegistry | null,
-  cwd: string,
-  containerBackend: string | null,
+  workspace: PersistedWorkspaceRecord,
 ): { containerStatus: "running" | "starting" } | Record<string, never> {
   // A null backend (host) never shows a container status, even if a container
   // is running for this cwd (another workspace with the same cwd may use a
   // container backend).
-  if (!containerBackend) return {};
-  if (registry?.hasContainerStrategy(cwd)) return { containerStatus: "running" };
-  if (registry?.isPendingActivation(cwd)) return { containerStatus: "starting" };
+  if (!workspace.containerBackend) return {};
+  const key = workspace.workspaceId;
+  if (registry?.hasContainerStrategy(key)) return { containerStatus: "running" };
+  if (registry?.isPendingActivation(key)) return { containerStatus: "starting" };
   return {};
 }
 /**
@@ -909,17 +909,18 @@ export class Session {
       clientSupportsWrapReflow: () =>
         this.clientCapabilities.has(CLIENT_CAPS.terminalReflowableSnapshot),
       getClientBufferedAmount: () => this.getTransportBufferedAmount(),
-      resolveLaunchStrategy: async (cwd, workspaceId) => {
+      resolveLaunchStrategy: async (_cwd, workspaceId) => {
         if (!this.launchStrategyRegistry) return null;
         // If the workspace uses the host backend, run on the host.
         if (workspaceId) {
           const workspace = await this.workspaceRegistry.get(workspaceId);
           if (!workspace?.containerBackend) return null;
         }
+        if (!workspaceId) return null;
         // awaitStrategy throws if the container fails to start. If it returns
         // a non-isolated strategy, the container hasn't started yet — treat
         // this as an error, not a fallback to host.
-        const strategy = await this.launchStrategyRegistry.awaitStrategy(cwd);
+        const strategy = await this.launchStrategyRegistry.awaitStrategy(workspaceId);
         if (!strategy.isIsolated) {
           throw new Error("Container is not running for this workspace");
         }
@@ -2309,6 +2310,8 @@ export class Session {
         return this.handleContainerRebuildRequest(msg);
       case "container.availability.request":
         return this.handleContainerAvailabilityRequest(msg);
+      case "container.probe.request":
+        return this.handleContainerProbeRequest(msg);
       default:
         return undefined;
     }
@@ -4375,11 +4378,7 @@ export class Session {
             project: await this.buildProjectPlacementForWorkspace(workspace, resolvedProjectRecord),
           }
         : {}),
-      ...resolveContainerStatus(
-        this.launchStrategyRegistry,
-        workspace.cwd,
-        workspace.containerBackend,
-      ),
+      ...resolveContainerStatus(this.launchStrategyRegistry, workspace),
       hasDevContainerConfig:
         this.containerBackends?.list().some((b) => b.hasConfig(workspace.cwd)) ?? false,
       // containerInfo is fetched async and emitted as a follow-up workspace
@@ -4404,13 +4403,11 @@ export class Session {
     // Only query container info when the strategy is active or pending —
     // avoids a docker inspect call for every workspace descriptor build.
     const registry = this.launchStrategyRegistry;
-    if (
-      !registry?.hasContainerStrategy(workspace.cwd) &&
-      !registry?.isPendingActivation(workspace.cwd)
-    ) {
+    const key = workspace.workspaceId;
+    if (!registry?.hasContainerStrategy(key) && !registry?.isPendingActivation(key)) {
       return undefined;
     }
-    return backend.getContainerInfo(workspace.cwd);
+    return backend.getContainerInfo(key);
   }
 
   /**
@@ -4428,8 +4425,9 @@ export class Session {
     // A null backend (host) never starts a container — agents and terminals
     // run on the host directly.
     if (!workspace.containerBackend) return Promise.resolve();
-    if (registry.hasContainerStrategy(workspace.cwd)) return Promise.resolve();
-    if (registry.isPendingActivation(workspace.cwd)) return Promise.resolve();
+    const key = workspace.workspaceId;
+    if (registry.hasContainerStrategy(key)) return Promise.resolve();
+    if (registry.isPendingActivation(key)) return Promise.resolve();
 
     const config = discoverDevContainerConfig(workspace.cwd);
     if (!config) return Promise.resolve();
@@ -4439,7 +4437,7 @@ export class Session {
 
     // Register pending activation synchronously so the descriptor immediately
     // reports containerStatus "starting" without waiting for the async IIFE.
-    registry.registerPendingActivation(cwd);
+    registry.registerPendingActivation(key);
 
     // Check availability and start the container in the background.
     // Check availability before attempting to start. If Docker or the
@@ -4450,18 +4448,18 @@ export class Session {
       try {
         available = await backend.isAvailable();
       } catch {
-        registry.deactivateContainer(cwd);
+        registry.deactivateContainer(key);
         return;
       }
       if (!available) {
-        registry.deactivateContainer(cwd);
+        registry.deactivateContainer(key);
         return;
       }
-      const running = await backend.isAlreadyRunning(cwd).catch(() => false);
+      const running = await backend.isAlreadyRunning(key, cwd).catch(() => false);
       if (running) {
         try {
-          const handle = await backend.up({ workspaceFolder: cwd });
-          registry.activateContainer(cwd, handle);
+          const handle = await backend.up({ key, workspaceFolder: cwd });
+          registry.activateContainer(key, cwd, handle);
           void this.emitWorkspaceUpdateForWorkspaceId(workspaceId);
           void this.checkContainerConfigStaleness(workspace);
           this.watchContainerConfig(workspace);
@@ -4475,8 +4473,8 @@ export class Session {
       }
       this.sessionLogger.info({ workspaceId, cwd }, "Starting dev container for workspace");
       try {
-        const handle = await backend.up({ workspaceFolder: cwd });
-        registry.activateContainer(cwd, handle);
+        const handle = await backend.up({ key, workspaceFolder: cwd });
+        registry.activateContainer(key, cwd, handle);
         await this.workspaceRegistry.update(workspaceId, (record) => ({
           ...record,
           containerConfigHash: backend.getConfigHash(cwd),
@@ -4484,7 +4482,7 @@ export class Session {
         void this.emitWorkspaceUpdateForWorkspaceId(workspaceId);
         this.watchContainerConfig(workspace);
       } catch (error) {
-        registry.deactivateContainer(cwd);
+        registry.deactivateContainer(key);
         this.sessionLogger.error(
           { err: error, workspaceId, cwd },
           "Failed to start dev container for workspace",
@@ -4615,8 +4613,8 @@ export class Session {
     this.terminalController.killTerminalsForWorkspace(workspaceId);
 
     try {
-      const handle = await backend.restart({ workspaceFolder: cwd });
-      registry.activateContainer(cwd, handle);
+      const handle = await backend.restart({ key: workspaceId, workspaceFolder: cwd });
+      registry.activateContainer(workspaceId, cwd, handle);
       await this.workspaceRegistry.update(workspaceId, (record) => ({
         ...record,
         containerConfigHash: backend.getConfigHash(cwd),
@@ -4653,6 +4651,52 @@ export class Session {
       type: "container.availability.response",
       payload: { requestId, backends },
     });
+  }
+
+  private async handleContainerProbeRequest(
+    msg: Extract<SessionInboundMessage, { type: "container.probe.request" }>,
+  ): Promise<void> {
+    const { cwd, containerBackend, requestId } = msg;
+    const backend = this.containerBackends?.get(containerBackend) ?? null;
+    if (!backend) {
+      this.emit({
+        type: "container.probe.response",
+        payload: {
+          requestId,
+          success: false,
+          error: `Unknown backend: ${containerBackend}`,
+        },
+      });
+      return;
+    }
+    const probeKey = `probe:${cwd}`;
+    try {
+      // Start a temporary probe container for the new-workspace screen.
+      const handle = await backend.up({ key: probeKey, workspaceFolder: cwd });
+      // Activate the strategy so provider probes run inside the container.
+      this.launchStrategyRegistry?.activateContainer(probeKey, cwd, handle);
+      // Refresh the provider snapshot — all providers probed inside the container.
+      await this.providerSnapshotManager.refreshSnapshotForCwd({ cwd, containerBackend });
+      // Tear down the probe container.
+      await backend.stop(probeKey);
+      this.launchStrategyRegistry?.deactivateContainer(probeKey);
+      this.emit({
+        type: "container.probe.response",
+        payload: { requestId, success: true, error: null },
+      });
+    } catch (error) {
+      // Clean up on failure: stop the container if it started and deactivate.
+      try {
+        await backend.stop(probeKey);
+      } catch {
+        // ignore — best-effort cleanup
+      }
+      this.launchStrategyRegistry?.deactivateContainer(probeKey);
+      this.emit({
+        type: "container.probe.response",
+        payload: { requestId, success: false, error: getErrorMessage(error) },
+      });
+    }
   }
 
   private async handleContainerRebuildRequest(
@@ -4698,8 +4742,8 @@ export class Session {
     this.terminalController.killTerminalsForWorkspace(workspaceId);
 
     try {
-      const handle = await backend.rebuild({ workspaceFolder: cwd });
-      registry.activateContainer(cwd, handle);
+      const handle = await backend.rebuild({ key: workspaceId, workspaceFolder: cwd });
+      registry.activateContainer(workspaceId, cwd, handle);
       await this.workspaceRegistry.update(workspaceId, (record) => ({
         ...record,
         containerConfigHash: backend.getConfigHash(cwd),

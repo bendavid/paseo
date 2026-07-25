@@ -53,7 +53,7 @@ function createMockContainerBackend(
   options: {
     hasConfig?: (cwd: string) => boolean;
     isAvailable?: () => Promise<boolean>;
-    isAlreadyRunning?: (cwd: string) => Promise<boolean>;
+    isAlreadyRunning?: (key: string, workspaceFolder: string) => Promise<boolean>;
     configHash?: string | null;
   } = {},
 ): ContainerBackend & { createStrategy: () => unknown } {
@@ -63,32 +63,29 @@ function createMockContainerBackend(
     isAvailable: options.isAvailable ?? (async () => true),
     hasConfig: options.hasConfig ?? (() => false),
     async up(opts: ContainerUpOptions) {
-      const resolved = path.resolve(opts.workspaceFolder);
-      const existing = handles.get(resolved);
+      const existing = handles.get(opts.key);
       if (existing) return existing;
-      handles.set(resolved, HANDLE);
+      handles.set(opts.key, HANDLE);
       return HANDLE;
     },
     async restart(opts: ContainerUpOptions) {
-      const resolved = path.resolve(opts.workspaceFolder);
-      handles.delete(resolved);
-      handles.set(resolved, HANDLE);
+      handles.delete(opts.key);
+      handles.set(opts.key, HANDLE);
       return HANDLE;
     },
     async rebuild(opts: ContainerUpOptions) {
-      const resolved = path.resolve(opts.workspaceFolder);
-      handles.delete(resolved);
-      handles.set(resolved, HANDLE);
+      handles.delete(opts.key);
+      handles.set(opts.key, HANDLE);
       return HANDLE;
     },
-    async stop(cwd: string) {
-      handles.delete(path.resolve(cwd));
+    async stop(key: string) {
+      handles.delete(key);
     },
-    getHandle(cwd: string) {
-      return handles.get(path.resolve(cwd)) ?? null;
+    getHandle(key: string) {
+      return handles.get(key) ?? null;
     },
-    async getContainerInfo(cwd: string) {
-      const h = handles.get(path.resolve(cwd));
+    async getContainerInfo(key: string) {
+      const h = handles.get(key);
       if (!h) return null;
       return {
         backend: "devcontainer",
@@ -102,17 +99,16 @@ function createMockContainerBackend(
     getConfigHash(_cwd: string) {
       return options.configHash ?? "hash-123";
     },
-    isAlreadyRunning: options.isAlreadyRunning ?? (async () => false),
+    isAlreadyRunning:
+      options.isAlreadyRunning ?? (async (_key: string, _workspaceFolder: string) => false),
     createStrategy: () => new LocalLaunchStrategy(),
   };
 }
 
 function createContainerTestSession(options: {
   backend: ContainerBackend & {
-    createStrategy: (workspaceFolder: string, handle: ExecutionHandle) => unknown;
+    createStrategy: (key: string, workspaceFolder: string, handle: ExecutionHandle) => unknown;
   };
-  workspaces?: PersistedWorkspaceRecord[];
-  emitted?: SessionOutboundMessage[];
 }): Session {
   const logger = createTestLogger();
   const emitted = options.emitted ?? [];
@@ -284,7 +280,9 @@ test("describeWorkspaceRecord starts container directly when containerBackend is
   // the IIFE to completion — so up has been called by the time this resolves.
   await internals.describeWorkspaceRecord(workspace);
 
-  expect(upSpy).toHaveBeenCalledWith(expect.objectContaining({ workspaceFolder: cwd }));
+  expect(upSpy).toHaveBeenCalledWith(
+    expect.objectContaining({ key: "ws-test", workspaceFolder: cwd }),
+  );
 });
 
 test("describeWorkspaceRecord does not start container when containerBackend is host", async () => {
@@ -512,7 +510,9 @@ test("container.restart.request stops and restarts the container", async () => {
     requestId: "req-1",
   });
 
-  expect(restartSpy).toHaveBeenCalledWith(expect.objectContaining({ workspaceFolder: cwd }));
+  expect(restartSpy).toHaveBeenCalledWith(
+    expect.objectContaining({ key: "ws-test", workspaceFolder: cwd }),
+  );
   const response = emitted.find((m) => m.type === "container.restart.response");
   expect(response).toBeDefined();
   if (response && response.type === "container.restart.response") {
@@ -666,7 +666,7 @@ dockerTest(
     expect(await backend.isAvailable()).toBe(true);
 
     // isAlreadyRunning runs `docker ps --filter label=...` — no container for a fresh dir
-    expect(await backend.isAlreadyRunning(cwd)).toBe(false);
+    expect(await backend.isAlreadyRunning("real-test", cwd)).toBe(false);
 
     // getConfigHash hashes the devcontainer.json content
     const hash1 = backend.getConfigHash(cwd);
@@ -717,11 +717,15 @@ dockerTest(
     // Wait for the container to actually start in the background.
     // The maybeStartContainerForWorkspace IIFE runs isAvailable, isAlreadyRunning,
     // then `devcontainer up` which pulls alpine:latest + starts the container.
+    // Poll getContainerInfo (not isAlreadyRunning) because getContainerInfo
+    // requires the in-memory handle to be set, which only happens after up()
+    // completes. isAlreadyRunning can return true via `docker ps` before the
+    // handle is set, causing a race.
     const { promise: containerReady, resolve: resolveContainerReady } =
       Promise.withResolvers<void>();
     const checkInterval = setInterval(() => {
-      backend.isAlreadyRunning(cwd).then((running) => {
-        if (running) {
+      backend.getContainerInfo("ws-test").then((info) => {
+        if (info) {
           clearInterval(checkInterval);
           resolveContainerReady();
         }
@@ -730,15 +734,13 @@ dockerTest(
     }, 1000);
     await containerReady;
 
-    expect(await backend.isAlreadyRunning(cwd)).toBe(true);
-
-    const info = await backend.getContainerInfo(cwd);
+    const info = await backend.getContainerInfo("ws-test");
     expect(info).not.toBeNull();
     expect(info?.backend).toBe("devcontainer");
     expect(info?.image).toBeDefined();
     expect(info?.containerName).toBeDefined();
 
-    await backend.stop(cwd).catch(() => {});
+    await backend.stop("ws-test").catch(() => {});
   },
   120_000,
 );
@@ -775,7 +777,7 @@ test("awaitStrategy returns isolated strategy after container starts for devcont
   // The launch strategy registry should now have an isolated strategy for this cwd.
   const registry = createLaunchStrategyRegistry({
     logger: createTestLogger(),
-    createStrategy: (workspaceFolder, handle) =>
+    createStrategy: (_key, workspaceFolder, handle) =>
       new ContainerExecLaunchStrategy({
         handle,
         execCommand: "docker",
@@ -784,9 +786,9 @@ test("awaitStrategy returns isolated strategy after container starts for devcont
       }),
   });
   // Register the same way maybeStartContainerForWorkspace does
-  registry.registerPendingActivation(cwd);
-  registry.activateContainer(cwd, HANDLE);
-  const strategy = await registry.awaitStrategy(cwd);
+  registry.registerPendingActivation("ws-test");
+  registry.activateContainer("ws-test", cwd, HANDLE);
+  const strategy = await registry.awaitStrategy("ws-test");
   expect(strategy.isIsolated).toBe(true);
 });
 
@@ -816,7 +818,7 @@ test("awaitStrategy returns local strategy for host workspace", async () => {
   // No container was started, so awaitStrategy should return local strategy.
   const registry = createLaunchStrategyRegistry({
     logger: createTestLogger(),
-    createStrategy: (workspaceFolder, handle) =>
+    createStrategy: (_key, workspaceFolder, handle) =>
       new ContainerExecLaunchStrategy({
         handle,
         execCommand: "docker",
@@ -824,15 +826,14 @@ test("awaitStrategy returns local strategy for host workspace", async () => {
         hostWorkspaceFolder: workspaceFolder,
       }),
   });
-  const strategy = await registry.awaitStrategy(cwd);
+  const strategy = await registry.awaitStrategy("ws-test");
   expect(strategy.isIsolated).toBe(false);
 });
 
 test("awaitStrategy throws when container fails to start (no fallback to host)", async () => {
-  const cwd = makeDevcontainerDir();
   const registry = createLaunchStrategyRegistry({
     logger: createTestLogger(),
-    createStrategy: (workspaceFolder, handle) =>
+    createStrategy: (_key, workspaceFolder, handle) =>
       new ContainerExecLaunchStrategy({
         handle,
         execCommand: "docker",
@@ -842,13 +843,13 @@ test("awaitStrategy throws when container fails to start (no fallback to host)",
   });
 
   // Register a pending activation, then deactivate while awaitStrategy is waiting.
-  registry.registerPendingActivation(cwd);
+  registry.registerPendingActivation("ws-test");
 
   // Start awaitStrategy (it will wait on the pending promise)
-  const strategyPromise = registry.awaitStrategy(cwd);
+  const strategyPromise = registry.awaitStrategy("ws-test");
 
   // Deactivate (simulates container start failure) — this rejects the pending promise
-  registry.deactivateContainer(cwd);
+  registry.deactivateContainer("ws-test");
 
   // awaitStrategy should throw, not fall back to local strategy
   await expect(strategyPromise).rejects.toThrow();
@@ -922,14 +923,14 @@ test("resolveLaunchStrategy returns null for host workspace (agents run on host)
 
   const internals = asSessionInternals<{
     describeWorkspaceRecord: (workspace: PersistedWorkspaceRecord) => Promise<unknown>;
-    launchStrategyRegistry: { hasContainerStrategy: (cwd: string) => boolean };
+    launchStrategyRegistry: { hasContainerStrategy: (key: string) => boolean };
   }>(session);
 
   const workspace = makeWorkspace({ cwd, containerBackend: null });
   await internals.describeWorkspaceRecord(workspace);
   await flushMicrotasks();
 
-  expect(internals.launchStrategyRegistry.hasContainerStrategy(cwd)).toBe(false);
+  expect(internals.launchStrategyRegistry.hasContainerStrategy("ws-test")).toBe(false);
 });
 
 test("resolveLaunchStrategy returns isolated strategy for devcontainer workspace (agents run in container)", async () => {
@@ -949,7 +950,7 @@ test("resolveLaunchStrategy returns isolated strategy for devcontainer workspace
 
   const internals = asSessionInternals<{
     describeWorkspaceRecord: (workspace: PersistedWorkspaceRecord) => Promise<unknown>;
-    launchStrategyRegistry: { hasContainerStrategy: (cwd: string) => boolean };
+    launchStrategyRegistry: { hasContainerStrategy: (key: string) => boolean };
   }>(session);
 
   const workspace = makeWorkspace({ cwd, containerBackend: "devcontainer" });
@@ -958,7 +959,7 @@ test("resolveLaunchStrategy returns isolated strategy for devcontainer workspace
 
   // After the container starts, the launch strategy registry should have
   // an isolated strategy for this cwd.
-  expect(internals.launchStrategyRegistry.hasContainerStrategy(cwd)).toBe(true);
+  expect(internals.launchStrategyRegistry.hasContainerStrategy("ws-test")).toBe(true);
 });
 
 // ---------------------------------------------------------------------------
@@ -979,7 +980,7 @@ dockerTest(
     expect(await backend.isAvailable()).toBe(true);
 
     // Start the container directly
-    const handle = await backend.up({ workspaceFolder: cwd });
+    const handle = await backend.up({ key: "real-launch-1", workspaceFolder: cwd });
     expect(handle.identifier).toBeDefined();
     expect(handle.remoteUser).toBeDefined();
     expect(handle.remoteWorkspaceFolder).toBeDefined();
@@ -989,12 +990,12 @@ dockerTest(
       logger: createTestLogger(),
       createStrategy: backend.createStrategy,
     });
-    registry.activateContainer(cwd, handle);
+    registry.activateContainer("real-launch-1", cwd, handle);
 
-    const strategy = await registry.awaitStrategy(cwd);
+    const strategy = await registry.awaitStrategy("real-launch-1");
     expect(strategy.isIsolated).toBe(true);
 
-    await backend.stop(cwd).catch(() => {});
+    await backend.stop("real-launch-1").catch(() => {});
   },
   120_000,
 );
@@ -1008,7 +1009,7 @@ dockerTest(
 
     expect(await backend.isAvailable()).toBe(true);
 
-    const handle = await backend.up({ workspaceFolder: cwd });
+    const handle = await backend.up({ key: "real-launch-2", workspaceFolder: cwd });
 
     const strategy = new ContainerExecLaunchStrategy({
       handle,
@@ -1040,7 +1041,7 @@ dockerTest(
 
     expect(output).toBe("agent-in-container");
 
-    await backend.stop(cwd).catch(() => {});
+    await backend.stop("real-launch-2").catch(() => {});
   },
   120_000,
 );
@@ -1066,8 +1067,8 @@ dockerTest(
         containerStatus?: string;
       }>;
       launchStrategyRegistry: {
-        hasContainerStrategy: (cwd: string) => boolean;
-        awaitStrategy: (cwd: string) => Promise<{ isIsolated: boolean }>;
+        hasContainerStrategy: (key: string) => boolean;
+        awaitStrategy: (key: string) => Promise<{ isIsolated: boolean }>;
       };
     }>(session);
 
@@ -1081,7 +1082,7 @@ dockerTest(
     const { promise: containerReady, resolve: resolveContainerReady } =
       Promise.withResolvers<void>();
     const checkInterval = setInterval(() => {
-      backend.isAlreadyRunning(cwd).then((running) => {
+      backend.isAlreadyRunning("ws-test", cwd).then((running) => {
         if (running) {
           clearInterval(checkInterval);
           resolveContainerReady();
@@ -1092,12 +1093,12 @@ dockerTest(
     await containerReady;
 
     // The launch strategy registry should now have an isolated strategy
-    expect(internals.launchStrategyRegistry.hasContainerStrategy(cwd)).toBe(true);
+    expect(internals.launchStrategyRegistry.hasContainerStrategy("ws-test")).toBe(true);
 
-    const strategy = await internals.launchStrategyRegistry.awaitStrategy(cwd);
+    const strategy = await internals.launchStrategyRegistry.awaitStrategy("ws-test");
     expect(strategy.isIsolated).toBe(true);
 
-    await backend.stop(cwd).catch(() => {});
+    await backend.stop("ws-test").catch(() => {});
   },
   120_000,
 );

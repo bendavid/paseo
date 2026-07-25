@@ -41,13 +41,9 @@ export function useContainerBackendAvailability(
         setContainerAvailability({
           backends: result.backends,
         });
-        // Default to the first available backend that has a config for this cwd.
-        const defaultBackend = result.backends.find(
-          (backend) => backend.available && backend.hasConfig,
-        );
-        if (defaultBackend) {
-          setContainerBackend(defaultBackend.id);
-        }
+        // Default to Host (null). The user must explicitly pick a container
+        // backend from the dropdown; availability is only fetched to populate
+        // the dropdown options.
         return undefined;
       })
       .catch((error) => {

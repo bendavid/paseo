@@ -2522,6 +2522,22 @@ export const ContainerAvailabilityResponseSchema = z.object({
   }),
 });
 
+export const ContainerProbeRequestSchema = z.object({
+  type: z.literal("container.probe.request"),
+  cwd: z.string(),
+  containerBackend: z.string(),
+  requestId: z.string(),
+});
+
+export const ContainerProbeResponseSchema = z.object({
+  type: z.literal("container.probe.response"),
+  payload: z.object({
+    requestId: z.string(),
+    success: z.boolean(),
+    error: z.string().nullable(),
+  }),
+});
+
 export const ContainerConfigChangedNotificationSchema = z.object({
   type: z.literal("container.config_changed"),
   payload: z.object({
@@ -2690,6 +2706,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ContainerRestartRequestSchema,
   ContainerRebuildRequestSchema,
   ContainerAvailabilityRequestSchema,
+  ContainerProbeRequestSchema,
 ]);
 
 export type SessionInboundMessage = z.infer<typeof SessionInboundMessageSchema>;
@@ -5458,6 +5475,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ContainerRestartResponseSchema,
   ContainerRebuildResponseSchema,
   ContainerAvailabilityResponseSchema,
+  ContainerProbeResponseSchema,
   ContainerConfigChangedNotificationSchema,
 ]);
 
@@ -5891,6 +5909,8 @@ export type ContainerRebuildRequest = z.infer<typeof ContainerRebuildRequestSche
 export type ContainerRebuildResponse = z.infer<typeof ContainerRebuildResponseSchema>;
 export type ContainerAvailabilityRequest = z.infer<typeof ContainerAvailabilityRequestSchema>;
 export type ContainerAvailabilityResponse = z.infer<typeof ContainerAvailabilityResponseSchema>;
+export type ContainerProbeRequest = z.infer<typeof ContainerProbeRequestSchema>;
+export type ContainerProbeResponse = z.infer<typeof ContainerProbeResponseSchema>;
 export type ContainerConfigChangedNotification = z.infer<
   typeof ContainerConfigChangedNotificationSchema
 >;

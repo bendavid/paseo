@@ -5288,6 +5288,19 @@ export class DaemonClient {
     });
   }
 
+  async probeContainer(
+    cwd: string,
+    containerBackend: string,
+    requestId?: string,
+  ): Promise<{ success: boolean; error: string | null }> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "container.probe.request", cwd, containerBackend },
+      responseType: "container.probe.response",
+    });
+    return { success: payload.success, error: payload.error };
+  }
+
   onContainerConfigChanged(handler: (workspaceId: string) => void): () => void {
     return this.on("container.config_changed", (message) => {
       if (message.type === "container.config_changed") {

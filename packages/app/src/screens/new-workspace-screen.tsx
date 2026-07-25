@@ -1721,19 +1721,29 @@ export function NewWorkspaceScreen({
   const { containerBackend, setContainerBackend, containerAvailability } =
     useContainerBackendAvailability(client, selectedSourceDirectory ?? "");
   const queryClient = useQueryClient();
-  // Refresh the provider snapshot when the container backend changes so model
-  // selection re-probes with the correct backend. "host" clears any container
-  // error; "devcontainer" probes the container (which may error if the tool
-  // isn't installed there — that's correct).
+  // When the container backend changes, refresh the provider snapshot so model
+  // selection re-probes with the correct backend. For a container backend, first
+  // run a probe (starts a temporary container, refreshes the snapshot server-side,
+  // then stops the container); for Host (null), skip the probe. Either way, refetch
+  // the snapshot afterwards so the UI reflects the probed models.
   useEffect(() => {
     if (!client || !selectedSourceDirectory) return;
-    void refreshAndApplyProvidersSnapshot({
-      client,
-      queryClient,
-      serverId: selectedServerId,
-      cwd: selectedSourceDirectory,
-      containerBackend,
-    });
+    void (async () => {
+      if (containerBackend) {
+        try {
+          await client.probeContainer(selectedSourceDirectory, containerBackend);
+        } catch {
+          // Probe failed — the error surfaces in the refreshed snapshot.
+        }
+      }
+      await refreshAndApplyProvidersSnapshot({
+        client,
+        queryClient,
+        serverId: selectedServerId,
+        cwd: selectedSourceDirectory,
+        containerBackend,
+      });
+    })();
   }, [client, queryClient, selectedServerId, selectedSourceDirectory, containerBackend]);
   const projectIconTargets = useMemo(
     () =>

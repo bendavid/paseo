@@ -841,22 +841,21 @@ export async function createPaseoDaemon(
     extraClients: config.agentClients,
     resolveLaunchStrategy: async (cwd, containerBackendOverride) => {
       if (!launchStrategyRegistry) return null;
-      // Use the override if provided (new-workspace screen where the
-      // workspace doesn't exist yet). Otherwise look up the workspace.
-      let backend: string | null | undefined = containerBackendOverride;
-      if (!backend) {
+      // Resolve the registry key: a synthetic probe key for the new-workspace
+      // screen (no workspace exists yet), or the workspaceId for an existing
+      // workspace.
+      let key: string | null;
+      if (containerBackendOverride) {
+        key = `probe:${cwd}`;
+      } else {
         const workspaces = await workspaceRegistry?.list();
-        const workspaceId = workspaces ? resolveWorkspaceIdForPath(cwd, workspaces) : null;
-        if (workspaceId) {
-          const workspace = await workspaceRegistry?.get(workspaceId);
-          backend = workspace?.containerBackend;
-        }
+        key = workspaces ? resolveWorkspaceIdForPath(cwd, workspaces) : null;
       }
-      if (!backend) return null;
+      if (!key) return null;
       // Strict: workspace-scoped catalog refresh must use the container's
       // tool, not the host's. Throws if the container isn't running — the
       // error surfaces in the snapshot entry.
-      const strategy = await launchStrategyRegistry.awaitStrategy(cwd);
+      const strategy = await launchStrategyRegistry.awaitStrategy(key);
       if (!strategy.isIsolated) {
         throw new Error("Container is not running for this workspace");
       }
@@ -883,14 +882,13 @@ export async function createPaseoDaemon(
           ? (resolveWorkspaceIdForPath(cwd, workspaces) ?? undefined)
           : undefined;
       }
-      if (workspaceId) {
-        const workspace = await workspaceRegistry?.get(workspaceId);
-        if (!workspace?.containerBackend) return null;
-      }
+      if (!workspaceId) return null;
+      const workspace = await workspaceRegistry?.get(workspaceId);
+      if (!workspace?.containerBackend) return null; // null = host
       // awaitStrategy throws if the container fails to start. If it returns
       // a non-isolated strategy, the container hasn't started yet — treat
       // this as an error, not a fallback to host.
-      const strategy = await launchStrategyRegistry.awaitStrategy(cwd);
+      const strategy = await launchStrategyRegistry.awaitStrategy(workspaceId);
       if (!strategy.isIsolated) {
         throw new Error("Container is not running for this workspace");
       }
