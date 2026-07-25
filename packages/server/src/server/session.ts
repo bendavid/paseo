@@ -3080,6 +3080,17 @@ export class Session {
         throw new Error(`Working directory does not exist or is not a directory: ${resolvedCwd}`);
       }
 
+      // Trigger container approval/setup before the agent starts. If a
+      // devcontainer.json exists, this registers a pending activation that
+      // blocks the agent's launch strategy until the user approves (or the
+      // container is reused if already running).
+      const workspaceForContainer = await this.workspaceRegistry.get(
+        resolvedIntent.intent.workspaceId,
+      );
+      if (workspaceForContainer) {
+        await this.maybeStartContainerForWorkspace(workspaceForContainer);
+      }
+
       const { snapshot, liveSnapshot } = await createAgentCommand(
         {
           agentManager: this.agentManager,
