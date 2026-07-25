@@ -46,7 +46,6 @@ const HANDLE: ExecutionHandle = {
   identifier: "abc123def456",
   remoteUser: "root",
   remoteWorkspaceFolder: "/workspaces/test",
-  defaultShell: "/bin/bash",
 };
 
 function createMockContainerBackend(
@@ -880,33 +879,25 @@ test("ContainerExecLaunchStrategy.wrapCommand produces valid docker exec for ter
   expect(wIndex).toBeLessThan(idIndex);
 });
 
-test("ContainerExecLaunchStrategy.defaultShell uses handle.defaultShell when available", () => {
+test("ContainerExecLaunchStrategy.resolveDefaultShell detects shell inside container", async () => {
+  // Can't test against a real container without docker, but we can verify
+  // the method exists and returns a string. The real docker tests below
+  // exercise this against an actual container.
   const strategy = new ContainerExecLaunchStrategy({
     handle: HANDLE,
     execCommand: "docker",
     execArgsPrefix: ["exec", "-u", HANDLE.remoteUser, HANDLE.identifier],
     hostWorkspaceFolder: "/tmp/test-workspace",
   });
-
-  // The strategy should expose the container's detected default shell
-  // so the terminal controller can use it as the fallback command.
-  expect(strategy.defaultShell).toBe("/bin/bash");
+  // Without a real container, resolveDefaultShell falls back to /bin/sh.
+  const shell = await strategy.resolveDefaultShell();
+  expect(shell).toBe("/bin/sh");
 });
 
-test("ContainerExecLaunchStrategy.defaultShell falls back to /bin/sh when handle has no defaultShell", () => {
-  const handleWithoutShell: ExecutionHandle = {
-    identifier: "abc123",
-    remoteUser: "root",
-    remoteWorkspaceFolder: "/ws",
-  };
-  const strategy = new ContainerExecLaunchStrategy({
-    handle: handleWithoutShell,
-    execCommand: "docker",
-    execArgsPrefix: ["exec", "-u", handleWithoutShell.remoteUser, handleWithoutShell.identifier],
-    hostWorkspaceFolder: "/tmp/test",
-  });
-
-  expect(strategy.defaultShell).toBe("/bin/sh");
+test("LocalLaunchStrategy.resolveDefaultShell returns host shell", async () => {
+  const strategy = new LocalLaunchStrategy();
+  const shell = await strategy.resolveDefaultShell();
+  expect(shell).toBe(process.env.SHELL || "/bin/sh");
 });
 
 test("ContainerExecLaunchStrategy.wrapCommand produces valid docker exec with args", () => {
@@ -1123,6 +1114,33 @@ dockerTest(
 
     const strategy = await internals.launchStrategyRegistry.awaitStrategy(cwd);
     expect(strategy.isIsolated).toBe(true);
+
+    await backend.stop(cwd).catch(() => {});
+  },
+  120_000,
+);
+
+dockerTest(
+  "real backend: resolveDefaultShell detects shell inside running container",
+  async () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "paseo-devcontainer-real-"));
+    writeFileSync(path.join(cwd, ".devcontainer.json"), '{"image":"alpine:latest"}');
+    const backend = createDevContainerBackend({ logger: createTestLogger() });
+
+    expect(await backend.isAvailable()).toBe(true);
+
+    const handle = await backend.up({ workspaceFolder: cwd });
+
+    const strategy = new ContainerExecLaunchStrategy({
+      handle,
+      execCommand: "docker",
+      execArgsPrefix: ["exec", "-u", handle.remoteUser, handle.identifier],
+      hostWorkspaceFolder: cwd,
+    });
+
+    const shell = await strategy.resolveDefaultShell();
+    // Alpine has /bin/bash (via busybox) or /bin/sh — either is valid.
+    expect(shell).toMatch(/^\/bin\/(sh|bash|ash|zsh)$/);
 
     await backend.stop(cwd).catch(() => {});
   },

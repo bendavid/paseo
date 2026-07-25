@@ -57,15 +57,15 @@ export interface ProcessLaunchStrategy {
    */
   resolveCwd(hostCwd: string): string;
 
-  /** Whether this strategy executes inside an isolated environment */
   readonly isIsolated: boolean;
 
   /**
-   * The default shell to use when no explicit command is provided.
-   * For local execution, this is the host's $SHELL.
-   * For container execution, this is detected inside the container.
+   * Detect the default shell available in the execution environment.
+   * For local execution, returns the host's $SHELL.
+   * For container execution, runs `which` inside the container.
+   * Called on-demand when a terminal is created without an explicit command.
    */
-  readonly defaultShell: string;
+  resolveDefaultShell(): Promise<string>;
 }
 
 /**
@@ -73,7 +73,6 @@ export interface ProcessLaunchStrategy {
  */
 export class LocalLaunchStrategy implements ProcessLaunchStrategy {
   readonly isIsolated = false;
-  readonly defaultShell = process.env.SHELL || "/bin/sh";
 
   spawn(command: string, args: string[], options?: LaunchSpawnOptions): ChildProcess {
     // Defer import to avoid circular module loading at module-eval time.
@@ -89,6 +88,10 @@ export class LocalLaunchStrategy implements ProcessLaunchStrategy {
   resolveCwd(hostCwd: string): string {
     return hostCwd;
   }
+
+  async resolveDefaultShell(): Promise<string> {
+    return process.env.SHELL || "/bin/sh";
+  }
 }
 
 /**
@@ -103,7 +106,6 @@ export class LocalLaunchStrategy implements ProcessLaunchStrategy {
  */
 export class ContainerExecLaunchStrategy implements ProcessLaunchStrategy {
   readonly isIsolated = true;
-  readonly defaultShell: string;
 
   private readonly handle: ExecutionHandle;
   private readonly execCommand: string;
@@ -122,7 +124,6 @@ export class ContainerExecLaunchStrategy implements ProcessLaunchStrategy {
     this.execCommand = options.execCommand;
     this.execArgsPrefix = options.execArgsPrefix;
     this.hostWorkspaceFolder = options.hostWorkspaceFolder;
-    this.defaultShell = options.handle.defaultShell ?? "/bin/sh";
   }
 
   spawn(command: string, args: string[], options?: LaunchSpawnOptions): ChildProcess {
@@ -176,6 +177,32 @@ export class ContainerExecLaunchStrategy implements ProcessLaunchStrategy {
       command: this.execCommand,
       args: execArgs,
     };
+  }
+
+  /**
+   * Detect the best available shell inside the container by running
+   * `which bash || which zsh || which sh` via docker exec. Falls back
+   * to /bin/sh if detection fails. Called on-demand when a terminal is
+   * created without an explicit command.
+   */
+  async resolveDefaultShell(): Promise<string> {
+    try {
+      const { execFile } = await import("node:child_process");
+      const result = await new Promise<string>((resolveFn, rejectFn) => {
+        execFile(
+          this.execCommand,
+          [...this.execArgsPrefix, "sh", "-c", "which bash || which zsh || which sh"],
+          { timeout: 5_000, encoding: "utf8" },
+          (err, stdout) => {
+            if (err) rejectFn(err);
+            else resolveFn(stdout.trim());
+          },
+        );
+      });
+      return result || "/bin/sh";
+    } catch {
+      return "/bin/sh";
+    }
   }
 
   resolveCwd(hostCwd: string): string {

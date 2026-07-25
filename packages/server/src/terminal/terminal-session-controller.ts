@@ -517,6 +517,7 @@ export class TerminalSessionController {
     );
   }
 
+  // oxlint-disable-next-line eslint(complexity): terminal creation has many branches
   private async handleCreateTerminalRequest(msg: CreateTerminalRequest): Promise<void> {
     if (!this.terminalManager) {
       this.emit({
@@ -559,15 +560,16 @@ export class TerminalSessionController {
       // Resolve the launch strategy in the parent process. The strategy
       // object can't be serialized across the worker boundary, so we
       // call wrapCommand here and pass the pre-wrapped command/args.
-      // When no explicit command is provided (the default terminal case),
-      // use /bin/sh as the fallback — NOT the host's $SHELL, which may not
-      // exist inside the container image.
       const launchStrategy = this.resolveLaunchStrategy
         ? await this.resolveLaunchStrategy(msg.cwd, workspaceId)
         : null;
       const isIsolated = launchStrategy?.isIsolated ?? false;
+      // When no explicit command is provided (the default terminal case),
+      // detect the shell available inside the container on-demand.
+      const fallbackShell =
+        isIsolated && !msg.command ? await launchStrategy!.resolveDefaultShell() : null;
       const terminalCommand = isIsolated
-        ? launchStrategy!.wrapCommand(msg.command ?? launchStrategy!.defaultShell, msg.args ?? [], {
+        ? launchStrategy!.wrapCommand(msg.command ?? fallbackShell ?? "/bin/sh", msg.args ?? [], {
             cwd: msg.cwd,
           })
         : null;
