@@ -76,11 +76,17 @@ export function ContainerApprovalBanner({ serverId, workspaceId }: ContainerAppr
     setConfigChanged(false);
   }, []);
 
-  if (!approvalPending && !configChanged && containerStatus !== "starting") return null;
+  // The approval prompt shows when either:
+  // - the container.approval_required event fired (approvalPending), or
+  // - the workspace descriptor already reports containerStatus "starting"
+  //   (the event may have fired before this component mounted)
+  const showApprovalPrompt = approvalPending || containerStatus === "starting";
+
+  if (!showApprovalPrompt && !configChanged) return null;
 
   return (
     <View style={styles.container}>
-      {approvalPending ? (
+      {showApprovalPrompt ? (
         <View style={styles.banner}>
           <View style={styles.bannerContent}>
             <Text style={styles.bannerTitle}>{t("workspace.header.container.approvalTitle")}</Text>
