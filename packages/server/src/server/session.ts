@@ -4270,7 +4270,7 @@ export class Session {
       diffStat = snapshot.git.diffStat;
     }
 
-    return {
+    const descriptor: WorkspaceDescriptorPayload = {
       id: workspace.workspaceId,
       projectId: workspace.projectId,
       projectDisplayName: resolvedProjectRecord
@@ -4297,8 +4297,18 @@ export class Session {
         : {}),
       ...resolveContainerStatus(this.launchStrategyRegistry, workspace.cwd),
       hasDevContainerConfig: this.containerBackend?.hasConfig(workspace.cwd) ?? false,
-      containerInfo: await this.resolveContainerInfo(workspace.cwd),
+      // containerInfo is fetched async and emitted as a follow-up workspace
+      // update, so a slow docker inspect doesn't block the descriptor.
+      containerInfo: undefined,
     };
+    // Fire-and-forget: fetch container info and emit an update if available.
+    void this.resolveContainerInfo(workspace.cwd).then((info) => {
+      if (info) {
+        void this.emitWorkspaceUpdateForWorkspaceId(workspace.workspaceId);
+      }
+      return undefined;
+    });
+    return descriptor;
   }
 
   private async resolveContainerInfo(
