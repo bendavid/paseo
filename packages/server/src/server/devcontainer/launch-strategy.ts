@@ -29,6 +29,7 @@ export interface LaunchSpawnOptions {
   shell?: boolean | string;
   stdio?: SpawnOptions["stdio"];
   detached?: boolean;
+  signal?: AbortSignal;
 }
 
 /** The command and args to actually execute, possibly wrapped in an exec call. */
@@ -145,6 +146,7 @@ export class ContainerExecLaunchStrategy implements ProcessLaunchStrategy {
       env: childEnv,
       stdio: options?.stdio ?? ["pipe", "pipe", "pipe"],
       windowsHide: true,
+      ...(options?.signal ? { signal: options.signal } : {}),
     });
   }
   wrapCommand(command: string, args: string[], options?: { cwd?: string }): ResolvedCommand {

@@ -8,6 +8,7 @@ import {
 } from "../../provider-launch-config.js";
 import { buildSelfNodeCommand } from "../../../paseo-env.js";
 import { spawnProcess } from "../../../../utils/spawn.js";
+import type { ProcessLaunchStrategy } from "../../../devcontainer/launch-strategy.js";
 
 // Keep the raw SDK query import in this module only. Claude process launch behavior
 // must stay shared between production and tests so Windows .cmd/.bat handling cannot
@@ -20,6 +21,7 @@ export type ClaudeQueryFactory = (input: ClaudeQueryInput) => Query;
 export interface ClaudeQueryContext {
   runtimeSettings?: ProviderRuntimeSettings;
   launchEnv?: Record<string, string>;
+  launchStrategy?: ProcessLaunchStrategy;
   queryFactory?: ClaudeQueryFactory;
   /** Called with the spawned child process so the caller can tree-kill it on close. */
   onChildProcess?: (child: ChildProcess) => void;
@@ -58,7 +60,7 @@ function applyRuntimeSettingsToClaudeOptions(
   options: ClaudeOptions,
   context: ClaudeQueryContext,
 ): ClaudeOptions {
-  const { runtimeSettings, launchEnv, onChildProcess } = context;
+  const { runtimeSettings, launchEnv, launchStrategy, onChildProcess } = context;
   return {
     ...options,
     spawnClaudeCodeProcess: (spawnOptions) => {
@@ -84,18 +86,26 @@ function applyRuntimeSettingsToClaudeOptions(
         : null;
       const command = selfNodeCommand?.command ?? resolved.command;
       const args = selfNodeCommand?.args ?? resolved.args;
-      const child = spawnProcess(command, args, {
-        cwd: spawnOptions.cwd,
-        ...(selfNodeCommand
-          ? { env: selfNodeCommand.env, envMode: "internal" as const }
-          : providerEnvSpec),
-        signal: spawnOptions.signal,
-        stdio: ["pipe", "pipe", "pipe"],
-        // Bypass cmd.exe on Windows: the SDK passes --mcp-config with inline JSON
-        // containing double quotes, which cmd.exe mangles (strips quotes, breaks parsing).
-        // The command is always a resolved binary path, so shell routing is unnecessary.
-        shell: false,
-      });
+      const child = launchStrategy
+        ? launchStrategy.spawn(command, args, {
+            cwd: spawnOptions.cwd,
+            envOverlay: providerEnvSpec.envOverlay,
+            signal: spawnOptions.signal,
+            stdio: ["pipe", "pipe", "pipe"],
+            shell: false,
+          })
+        : spawnProcess(command, args, {
+            cwd: spawnOptions.cwd,
+            ...(selfNodeCommand
+              ? { env: selfNodeCommand.env, envMode: "internal" as const }
+              : providerEnvSpec),
+            signal: spawnOptions.signal,
+            stdio: ["pipe", "pipe", "pipe"],
+            // Bypass cmd.exe on Windows: the SDK passes --mcp-config with inline JSON
+            // containing double quotes, which cmd.exe mangles (strips quotes, breaks parsing).
+            // The command is always a resolved binary path, so shell routing is unnecessary.
+            shell: false,
+          });
       onChildProcess?.(child);
       if (typeof options.stderr === "function") {
         child.stderr?.on("data", (chunk: Buffer | string) => {
