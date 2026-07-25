@@ -1,16 +1,16 @@
-import { useCallback, type ReactNode } from "react";
+import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { Pressable, View, Text } from "react-native";
-import { StyleSheet } from "react-native-unistyles";
-import type { Theme } from "@/styles/theme";
+import { SelectField, type SelectFieldDisplay } from "@/components/ui/select-field";
+
+export type ContainerBackend = "host" | "devcontainer";
 
 export interface ContainerBackendSelectorProps {
-  value: "host" | "devcontainer";
+  value: ContainerBackend;
   /** Whether docker is installed and available on the host */
   dockerAvailable: boolean;
   /** Whether a devcontainer.json exists in the project directory */
   hasDevContainerConfig: boolean;
-  onChange: (value: "host" | "devcontainer") => void;
+  onChange: (value: ContainerBackend) => void;
 }
 
 export function ContainerBackendSelector({
@@ -20,86 +20,50 @@ export function ContainerBackendSelector({
   onChange,
 }: ContainerBackendSelectorProps) {
   const { t } = useTranslation();
-  const selectHost = useCallback(() => onChange("host"), [onChange]);
-  const selectDevcontainer = useCallback(() => onChange("devcontainer"), [onChange]);
-  const devContainerEnabled = dockerAvailable && hasDevContainerConfig;
-  let backendHint: ReactNode = null;
-  if (!dockerAvailable) {
-    backendHint = (
-      <Text style={styles.backendHint}>
-        {t("workspaceSetup.containerBackend.dockerUnavailable")}
-      </Text>
-    );
-  } else if (!hasDevContainerConfig) {
-    backendHint = (
-      <Text style={styles.backendHint}>
-        {t("workspaceSetup.containerBackend.noDevContainerConfig")}
-      </Text>
-    );
-  }
+
+  const hint = useMemo(() => {
+    if (!dockerAvailable) return t("workspaceSetup.containerBackend.dockerUnavailable");
+    if (!hasDevContainerConfig) return t("workspaceSetup.containerBackend.noDevContainerConfig");
+    return undefined;
+  }, [dockerAvailable, hasDevContainerConfig, t]);
+
+  const selectedDisplay: SelectFieldDisplay | null = useMemo(
+    () => ({
+      label: value === "devcontainer" ? "Dev Container" : "Host",
+    }),
+    [value],
+  );
+
+  const handleChange = useCallback(
+    (next: ContainerBackend) => {
+      onChange(next);
+    },
+    [onChange],
+  );
+
   return (
-    <View style={styles.backendSelector}>
-      <Text style={styles.backendLabel}>{t("workspaceSetup.containerBackend.label")}</Text>
-      <View style={styles.backendOptions}>
-        <Pressable
-          style={[styles.backendOption, value === "host" && styles.backendOptionSelected]}
-          onPress={selectHost}
-        >
-          <Text style={styles.backendOptionText}>{t("workspaceSetup.containerBackend.host")}</Text>
-        </Pressable>
-        <Pressable
-          style={[
-            styles.backendOption,
-            value === "devcontainer" && styles.backendOptionSelected,
-            !devContainerEnabled && styles.backendOptionDisabled,
-          ]}
-          disabled={!devContainerEnabled}
-          onPress={selectDevcontainer}
-        >
-          <Text style={styles.backendOptionText}>
-            {t("workspaceSetup.containerBackend.devcontainer")}
-          </Text>
-        </Pressable>
-      </View>
-      {backendHint}
-    </View>
+    <SelectField<ContainerBackend>
+      label={t("workspaceSetup.containerBackend.label")}
+      value={value}
+      selectedDisplay={selectedDisplay}
+      onChange={handleChange}
+      placeholder="Host"
+      emptyText="No backends available"
+      options={[
+        {
+          id: "host",
+          value: "host",
+          label: t("workspaceSetup.containerBackend.host"),
+        },
+        {
+          id: "devcontainer",
+          value: "devcontainer",
+          label: t("workspaceSetup.containerBackend.devcontainer"),
+          testID: "container-backend-devcontainer",
+        },
+      ]}
+      hint={hint}
+      testID="container-backend-selector"
+    />
   );
 }
-
-const styles = StyleSheet.create((theme: Theme) => ({
-  backendSelector: {
-    gap: theme.spacing[1],
-  },
-  backendLabel: {
-    fontSize: theme.fontSize.sm,
-    color: theme.colors.foregroundMuted,
-  },
-  backendOptions: {
-    flexDirection: "row",
-    gap: theme.spacing[2],
-  },
-  backendOption: {
-    flex: 1,
-    paddingVertical: theme.spacing[2],
-    paddingHorizontal: theme.spacing[3],
-    borderRadius: theme.borderRadius.md,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    alignItems: "center",
-  },
-  backendOptionSelected: {
-    borderColor: theme.colors.foreground,
-    backgroundColor: theme.colors.surface2,
-  },
-  backendOptionDisabled: {
-    opacity: 0.5,
-  },
-  backendOptionText: {
-    fontSize: theme.fontSize.sm,
-    color: theme.colors.foreground,
-  },
-  backendHint: {
-    fontSize: theme.fontSize.xs,
-    color: theme.colors.foregroundMuted,
-  },
-}));

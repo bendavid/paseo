@@ -702,13 +702,31 @@ dockerTest(
     }>(session);
 
     const workspace = makeWorkspace({ cwd, containerBackend: "devcontainer" });
-    // describeWorkspaceRecord awaits maybeStartContainerForWorkspace, which runs
-    // `devcontainer up` (pulling alpine:latest + starting the container). This
-    // can take 30+ seconds on first pull. No approval prompt — the container
-    // starts directly.
+    // describeWorkspaceRecord is now non-blocking — it fires
+    // maybeStartContainerForWorkspace as fire-and-forget. The descriptor
+    // returns immediately with containerStatus "starting" (pending activation
+    // registered). The container starts in the background.
     const descriptor = await internals.describeWorkspaceRecord(workspace);
 
-    expect(descriptor.containerStatus).toBe("running");
+    // containerStatus should be "starting" (pending activation registered)
+    expect(descriptor.containerStatus).toBe("starting");
+
+    // Wait for the container to actually start in the background.
+    // The maybeStartContainerForWorkspace IIFE runs isAvailable, isAlreadyRunning,
+    // then `devcontainer up` which pulls alpine:latest + starts the container.
+    const { promise: containerReady, resolve: resolveContainerReady } =
+      Promise.withResolvers<void>();
+    const checkInterval = setInterval(() => {
+      backend.isAlreadyRunning(cwd).then((running) => {
+        if (running) {
+          clearInterval(checkInterval);
+          resolveContainerReady();
+        }
+        return undefined;
+      });
+    }, 1000);
+    await containerReady;
+
     expect(await backend.isAlreadyRunning(cwd)).toBe(true);
 
     const info = await backend.getContainerInfo(cwd);

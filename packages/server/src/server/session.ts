@@ -4267,7 +4267,11 @@ export class Session {
     workspace: PersistedWorkspaceRecord,
     projectRecord?: PersistedProjectRecord | null,
   ): Promise<WorkspaceDescriptorPayload> {
-    await this.maybeStartContainerForWorkspace(workspace);
+    // Fire-and-forget: do not block the descriptor on container startup.
+    // The container starts in the background and a workspace update is emitted
+    // when it's ready. This prevents workspace creation from timing out while
+    // pulling images or building the container.
+    void this.maybeStartContainerForWorkspace(workspace);
     const resolvedProjectRecord =
       projectRecord ?? (await this.projectRegistry.get(workspace.projectId));
 
@@ -4359,6 +4363,11 @@ export class Session {
     const cwd = workspace.cwd;
     const workspaceId = workspace.workspaceId;
 
+    // Register pending activation synchronously so the descriptor immediately
+    // reports containerStatus "starting" without waiting for the async IIFE.
+    registry.registerPendingActivation(cwd);
+
+    // Check availability and start the container in the background.
     // Check availability before attempting to start. If Docker or the
     // devcontainer CLI isn't available, skip silently — agents and terminals
     // run on the host, and the UI doesn't show a container badge.
@@ -4367,9 +4376,13 @@ export class Session {
       try {
         available = await backend.isAvailable();
       } catch {
+        registry.deactivateContainer(cwd);
         return;
       }
-      if (!available) return;
+      if (!available) {
+        registry.deactivateContainer(cwd);
+        return;
+      }
       const running = await backend.isAlreadyRunning(cwd).catch(() => false);
       if (running) {
         try {
@@ -4386,10 +4399,6 @@ export class Session {
         }
         return;
       }
-      // Register a pending activation while the container starts so the
-      // workspace descriptor reports containerStatus "starting" and agents/
-      // terminals wait for the container instead of launching on the host.
-      registry.registerPendingActivation(cwd);
       this.sessionLogger.info({ workspaceId, cwd }, "Starting dev container for workspace");
       try {
         const handle = await backend.up({ workspaceFolder: cwd });
