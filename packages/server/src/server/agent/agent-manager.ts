@@ -47,6 +47,7 @@ import { buildArchivedAgentRecord, type ArchivedStoredAgentRecord } from "./agen
 import type { StoredAgentRecord, AgentStorage } from "./agent-storage.js";
 import type { AgentOwner } from "./agent-owner.js";
 import type { LaunchStrategyRegistry } from "../devcontainer/launch-strategy-registry.js";
+import type { ProcessLaunchStrategy } from "../devcontainer/launch-strategy.js";
 import {
   InMemoryAgentTimelineStore,
   type SeedAgentTimelineOptions,
@@ -253,6 +254,10 @@ export interface AgentManagerOptions {
   paseoToolsEnabled?: boolean;
   paseoToolCatalogFactory?: PaseoToolCatalogFactory;
   launchStrategyRegistry?: LaunchStrategyRegistry;
+  resolveLaunchStrategy?: (
+    cwd: string,
+    workspaceId?: string,
+  ) => Promise<ProcessLaunchStrategy | null>;
   appendSystemPrompt?: string;
   agentStreamCoalesceWindowMs?: number;
   rescueTimeouts?: AgentManagerRescueTimeouts;
@@ -595,6 +600,9 @@ export class AgentManager {
   private paseoToolsEnabled = true;
   private paseoToolCatalogFactory: PaseoToolCatalogFactory | null = null;
   private launchStrategyRegistry: LaunchStrategyRegistry | null = null;
+  private resolveLaunchStrategy:
+    | ((cwd: string, workspaceId?: string) => Promise<ProcessLaunchStrategy | null>)
+    | null = null;
   private appendSystemPrompt: string;
   private onAgentAttention?: AgentAttentionCallback;
   private onAgentArchived?: AgentArchivedCallback;
@@ -603,6 +611,7 @@ export class AgentManager {
   private readonly rescueTimeouts: Required<AgentManagerRescueTimeouts>;
   private acceptingAgentRegistrations = true;
 
+  // eslint-disable-next-line complexity
   constructor(options: AgentManagerOptions) {
     this.idFactory = options?.idFactory ?? (() => randomUUID());
     this.registry = options?.registry;
@@ -611,9 +620,10 @@ export class AgentManager {
     this.onWorkspaceStateMayHaveChanged = options?.onWorkspaceStateMayHaveChanged;
     this.mcpBaseUrl = options?.mcpBaseUrl ?? null;
     this.mcpAuthToken = options?.mcpAuthToken ?? null;
-    this.configurePaseoTools(options);
     this.launchStrategyRegistry = options.launchStrategyRegistry ?? null;
+    this.resolveLaunchStrategy = options.resolveLaunchStrategy ?? null;
     this.appendSystemPrompt = options.appendSystemPrompt ?? "";
+    this.configurePaseoTools(options);
     this.logger = options.logger.child({ module: "agent", component: "agent-manager" });
     this.rescueTimeouts = {
       reloadSessionCloseMs:
@@ -1056,6 +1066,7 @@ export class AgentManager {
       client,
       options?.env,
       launchConfig.cwd,
+      options?.workspaceId,
     );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
     const createOptions = this.buildCreateSessionOptions(options);
@@ -1139,6 +1150,7 @@ export class AgentManager {
       client,
       undefined,
       launchConfig.cwd,
+      options?.workspaceId,
     );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
     const session = await client.resumeSession(
@@ -1191,6 +1203,7 @@ export class AgentManager {
       client,
       undefined,
       launchConfig.cwd,
+      input.workspaceId,
     );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
     const imported = await client.importSession(
@@ -1277,6 +1290,7 @@ export class AgentManager {
       client,
       undefined,
       launchConfig.cwd,
+      existing.workspaceId,
     );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
 
@@ -4248,6 +4262,7 @@ export class AgentManager {
     client: AgentClient,
     env?: Record<string, string>,
     cwd?: string,
+    workspaceId?: string,
   ): Promise<AgentLaunchContext> {
     const context: AgentLaunchContext = {
       agentId,
@@ -4263,11 +4278,15 @@ export class AgentManager {
     ) {
       context.paseoTools = await this.paseoToolCatalogFactory({ callerAgentId: agentId });
     }
-    if (this.launchStrategyRegistry && cwd) {
-      // Await container readiness so agents don't spawn on the host while
-      // a dev container is starting. If the container fails to start,
-      // awaitStrategy falls back to the local strategy.
-      context.launchStrategy = await this.launchStrategyRegistry.awaitStrategy(cwd);
+    if (cwd) {
+      // Use resolveLaunchStrategy (which checks per-workspace approval) when
+      // available. Fall back to the registry directly for backward compat.
+      if (this.resolveLaunchStrategy) {
+        const strategy = await this.resolveLaunchStrategy(cwd, workspaceId);
+        context.launchStrategy = strategy ?? undefined;
+      } else if (this.launchStrategyRegistry) {
+        context.launchStrategy = await this.launchStrategyRegistry.awaitStrategy(cwd);
+      }
     }
     return context;
   }

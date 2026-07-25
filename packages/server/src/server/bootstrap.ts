@@ -850,6 +850,15 @@ export async function createPaseoDaemon(
     },
     mcpAuthToken: agentMcpAuthToken,
     launchStrategyRegistry,
+    resolveLaunchStrategy: async (cwd, workspaceId) => {
+      if (!launchStrategyRegistry) return null;
+      if (workspaceId) {
+        const workspace = await workspaceRegistry?.get(workspaceId);
+        if (workspace?.containerApproval === "denied") return null;
+      }
+      const strategy = await launchStrategyRegistry.awaitStrategy(cwd);
+      return strategy.isIsolated ? strategy : null;
+    },
     logger,
   });
 

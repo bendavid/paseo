@@ -81,7 +81,10 @@ export interface TerminalSessionControllerOptions {
    * container via the strategy's wrapCommand. When absent, terminals spawn
    * on the host as before.
    */
-  resolveLaunchStrategy?: (cwd: string) => Promise<ProcessLaunchStrategy | null>;
+  resolveLaunchStrategy?: (
+    cwd: string,
+    workspaceId?: string,
+  ) => Promise<ProcessLaunchStrategy | null>;
   // Drives the snapshot catch-up fallback: a keeping-up client reports ~0 and
   // keeps streaming; a backed-up client trips the snapshot path. Defaults to a
   // constant 0 (no backpressure signal) so callers without a transport always
@@ -138,7 +141,7 @@ export class TerminalSessionController {
   private readonly clientSupportsWrapReflow: () => boolean;
   private readonly getClientBufferedAmount: () => number | null;
   private readonly resolveLaunchStrategy:
-    | ((cwd: string) => Promise<ProcessLaunchStrategy | null>)
+    | ((cwd: string, workspaceId?: string) => Promise<ProcessLaunchStrategy | null>)
     | null;
   // A subscription is scoped to a (cwd, workspaceId) pair, keyed by
   // terminalSubscriptionKey: two workspaces sharing a cwd subscribe and unsub
@@ -557,7 +560,7 @@ export class TerminalSessionController {
       // object can't be serialized across the worker boundary, so we
       // call wrapCommand here and pass the pre-wrapped command/args.
       const launchStrategy = this.resolveLaunchStrategy
-        ? await this.resolveLaunchStrategy(msg.cwd)
+        ? await this.resolveLaunchStrategy(msg.cwd, workspaceId)
         : null;
       const isIsolated = launchStrategy?.isIsolated ?? false;
       const terminalCommand = isIsolated

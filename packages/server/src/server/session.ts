@@ -905,8 +905,14 @@ export class Session {
       clientSupportsWrapReflow: () =>
         this.clientCapabilities.has(CLIENT_CAPS.terminalReflowableSnapshot),
       getClientBufferedAmount: () => this.getTransportBufferedAmount(),
-      resolveLaunchStrategy: async (cwd) => {
+      resolveLaunchStrategy: async (cwd, workspaceId) => {
         if (!this.launchStrategyRegistry) return null;
+        // If the workspace has denied container approval, run on the host
+        // even if a container is running for this cwd.
+        if (workspaceId) {
+          const workspace = await this.workspaceRegistry.get(workspaceId);
+          if (workspace?.containerApproval === "denied") return null;
+        }
         const strategy = await this.launchStrategyRegistry.awaitStrategy(cwd);
         return strategy.isIsolated ? strategy : null;
       },
@@ -4323,13 +4329,15 @@ export class Session {
     const backend = this.containerBackend;
     const registry = this.launchStrategyRegistry;
     if (!backend || !registry) return Promise.resolve();
+    // Check per-workspace approval before checking if a container is already
+    // running for this cwd — the user may want this workspace on the host
+    // even if another workspace with the same cwd has a container.
+    if (workspace.containerApproval === "denied") return Promise.resolve();
     if (registry.hasContainerStrategy(workspace.cwd)) return Promise.resolve();
     if (registry.isPendingActivation(workspace.cwd)) return Promise.resolve();
 
     const config = discoverDevContainerConfig(workspace.cwd);
     if (!config) return Promise.resolve();
-
-    if (workspace.containerApproval === "denied") return Promise.resolve();
 
     const cwd = workspace.cwd;
     const workspaceId = workspace.workspaceId;
