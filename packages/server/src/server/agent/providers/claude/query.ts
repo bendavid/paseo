@@ -89,7 +89,13 @@ function applyRuntimeSettingsToClaudeOptions(
       const child = launchStrategy
         ? launchStrategy.spawn(command, args, {
             cwd: spawnOptions.cwd,
-            envOverlay: providerEnvSpec.envOverlay,
+            // Merge baseEnv into envOverlay so the container process gets
+            // the SDK's env vars (API keys, entrypoint, etc.) via -e flags.
+            // The container's own env provides PATH, HOME, etc.
+            envOverlay: {
+              ...providerEnvSpec.baseEnv,
+              ...providerEnvSpec.envOverlay,
+            },
             signal: spawnOptions.signal,
             stdio: ["pipe", "pipe", "pipe"],
             shell: false,

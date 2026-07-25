@@ -121,19 +121,24 @@ export class ContainerExecLaunchStrategy implements ProcessLaunchStrategy {
       ? this.resolveCwd(options.cwd)
       : this.handle.remoteWorkspaceFolder;
 
-    // Insert -w before the container ID (which is the last element of execArgsPrefix).
-    // docker exec syntax: exec [OPTIONS] CONTAINER COMMAND [ARG...]
+    // Insert -w and -e flags before the container ID (which is the last
+    // element of execArgsPrefix). docker exec syntax:
+    //   exec [OPTIONS] CONTAINER COMMAND [ARG...]
+    // All flags must precede the container ID; anything after it is the
+    // command and its args.
     const execArgs = [...this.execArgsPrefix];
     const containerIdIndex = execArgs.length - 1;
-    execArgs.splice(containerIdIndex, 0, "-w", containerCwd);
+    const flagsToInsert: string[] = ["-w", containerCwd];
 
     // Pass env overlays as -e flags. The environment's own env is inherited
     // by the exec; we only need to add the overlay variables.
     if (options?.envOverlay) {
       for (const [key, value] of Object.entries(options.envOverlay)) {
-        execArgs.push("-e", `${key}=${value}`);
+        flagsToInsert.push("-e", `${key}=${value}`);
       }
     }
+
+    execArgs.splice(containerIdIndex, 0, ...flagsToInsert);
 
     execArgs.push(command, ...args);
 
