@@ -130,11 +130,12 @@ export class ContainerExecLaunchStrategy implements ProcessLaunchStrategy {
     const containerIdIndex = execArgs.length - 1;
     const flagsToInsert: string[] = ["-w", containerCwd];
 
-    // Pass env overlays as -e flags. The environment's own env is inherited
-    // by the exec; we only need to add the overlay variables.
+    // Pass env overlays as -e flags. Undefined values mean "unset this var"
+    // in the container — pass as -e KEY (without =value) so the container
+    // doesn't inherit it from its own environment.
     if (options?.envOverlay) {
       for (const [key, value] of Object.entries(options.envOverlay)) {
-        flagsToInsert.push("-e", `${key}=${value}`);
+        flagsToInsert.push("-e", value === undefined ? key : `${key}=${value}`);
       }
     }
 
@@ -145,7 +146,6 @@ export class ContainerExecLaunchStrategy implements ProcessLaunchStrategy {
     // docker/podman needs PATH to be found on the host. The container's
     // own PATH is set by the container image, not inherited from the host.
     const childEnv: NodeJS.ProcessEnv = { ...process.env };
-
     return spawn(this.execCommand, execArgs, {
       cwd: this.hostWorkspaceFolder,
       env: childEnv,
