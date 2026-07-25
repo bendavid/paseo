@@ -273,7 +273,7 @@ export function createDevContainerBackend(
     new ContainerExecLaunchStrategy({
       handle,
       execCommand: dockerBin,
-      execArgsPrefix: ["exec", "-u", handle.remoteUser, handle.identifier],
+      execArgsPrefix: ["exec", "-i", "-u", handle.remoteUser, handle.identifier],
       hostWorkspaceFolder: workspaceFolder,
     });
 
