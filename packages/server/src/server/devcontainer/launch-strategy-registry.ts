@@ -96,10 +96,15 @@ export function createLaunchStrategyRegistry(deps: {
 
       const pending = pendingActivations.get(resolved);
       if (pending) {
-        // Wait for the container to finish starting. If it fails, fall back
-        // to local — the error is already logged by the caller.
-        await pending.promise.catch(() => undefined);
-        return isolatedStrategies.get(resolved) ?? localStrategy;
+        // Wait for the container to finish starting. If it fails, propagate
+        // the error so agent/terminal creation fails rather than silently
+        // falling back to the host.
+        await pending.promise;
+        const strategy = isolatedStrategies.get(resolved);
+        if (!strategy) {
+          throw new Error("Container failed to start");
+        }
+        return strategy;
       }
 
       return localStrategy;

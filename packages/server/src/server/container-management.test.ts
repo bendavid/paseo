@@ -828,6 +828,32 @@ test("awaitStrategy returns local strategy for host workspace", async () => {
   expect(strategy.isIsolated).toBe(false);
 });
 
+test("awaitStrategy throws when container fails to start (no fallback to host)", async () => {
+  const cwd = makeDevcontainerDir();
+  const registry = createLaunchStrategyRegistry({
+    logger: createTestLogger(),
+    createStrategy: (workspaceFolder, handle) =>
+      new ContainerExecLaunchStrategy({
+        handle,
+        execCommand: "docker",
+        execArgsPrefix: ["exec", "-u", handle.remoteUser, handle.identifier],
+        hostWorkspaceFolder: workspaceFolder,
+      }),
+  });
+
+  // Register a pending activation, then deactivate while awaitStrategy is waiting.
+  registry.registerPendingActivation(cwd);
+
+  // Start awaitStrategy (it will wait on the pending promise)
+  const strategyPromise = registry.awaitStrategy(cwd);
+
+  // Deactivate (simulates container start failure) — this rejects the pending promise
+  registry.deactivateContainer(cwd);
+
+  // awaitStrategy should throw, not fall back to local strategy
+  await expect(strategyPromise).rejects.toThrow();
+});
+
 test("ContainerExecLaunchStrategy.wrapCommand produces valid docker exec for terminal", () => {
   const strategy = new ContainerExecLaunchStrategy({
     handle: HANDLE,
