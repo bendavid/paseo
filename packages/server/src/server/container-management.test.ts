@@ -879,27 +879,6 @@ test("ContainerExecLaunchStrategy.wrapCommand produces valid docker exec for ter
   expect(wIndex).toBeLessThan(idIndex);
 });
 
-test("ContainerExecLaunchStrategy.resolveDefaultShell detects shell inside container", async () => {
-  // Can't test against a real container without docker, but we can verify
-  // the method exists and returns a string. The real docker tests below
-  // exercise this against an actual container.
-  const strategy = new ContainerExecLaunchStrategy({
-    handle: HANDLE,
-    execCommand: "docker",
-    execArgsPrefix: ["exec", "-u", HANDLE.remoteUser, HANDLE.identifier],
-    hostWorkspaceFolder: "/tmp/test-workspace",
-  });
-  // Without a real container, resolveDefaultShell falls back to /bin/sh.
-  const shell = await strategy.resolveDefaultShell();
-  expect(shell).toBe("/bin/sh");
-});
-
-test("LocalLaunchStrategy.resolveDefaultShell returns host shell", async () => {
-  const strategy = new LocalLaunchStrategy();
-  const shell = await strategy.resolveDefaultShell();
-  expect(shell).toBe(process.env.SHELL || "/bin/sh");
-});
-
 test("ContainerExecLaunchStrategy.wrapCommand produces valid docker exec with args", () => {
   const strategy = new ContainerExecLaunchStrategy({
     handle: HANDLE,
@@ -1114,33 +1093,6 @@ dockerTest(
 
     const strategy = await internals.launchStrategyRegistry.awaitStrategy(cwd);
     expect(strategy.isIsolated).toBe(true);
-
-    await backend.stop(cwd).catch(() => {});
-  },
-  120_000,
-);
-
-dockerTest(
-  "real backend: resolveDefaultShell detects shell inside running container",
-  async () => {
-    const cwd = mkdtempSync(path.join(tmpdir(), "paseo-devcontainer-real-"));
-    writeFileSync(path.join(cwd, ".devcontainer.json"), '{"image":"alpine:latest"}');
-    const backend = createDevContainerBackend({ logger: createTestLogger() });
-
-    expect(await backend.isAvailable()).toBe(true);
-
-    const handle = await backend.up({ workspaceFolder: cwd });
-
-    const strategy = new ContainerExecLaunchStrategy({
-      handle,
-      execCommand: "docker",
-      execArgsPrefix: ["exec", "-u", handle.remoteUser, handle.identifier],
-      hostWorkspaceFolder: cwd,
-    });
-
-    const shell = await strategy.resolveDefaultShell();
-    // Alpine has /bin/bash (via busybox) or /bin/sh — either is valid.
-    expect(shell).toMatch(/^\/bin\/(sh|bash|ash|zsh)$/);
 
     await backend.stop(cwd).catch(() => {});
   },

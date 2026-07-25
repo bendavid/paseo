@@ -58,14 +58,6 @@ export interface ProcessLaunchStrategy {
   resolveCwd(hostCwd: string): string;
 
   readonly isIsolated: boolean;
-
-  /**
-   * Detect the default shell available in the execution environment.
-   * For local execution, returns the host's $SHELL.
-   * For container execution, runs `which` inside the container.
-   * Called on-demand when a terminal is created without an explicit command.
-   */
-  resolveDefaultShell(): Promise<string>;
 }
 
 /**
@@ -87,10 +79,6 @@ export class LocalLaunchStrategy implements ProcessLaunchStrategy {
 
   resolveCwd(hostCwd: string): string {
     return hostCwd;
-  }
-
-  async resolveDefaultShell(): Promise<string> {
-    return process.env.SHELL || "/bin/sh";
   }
 }
 
@@ -177,35 +165,6 @@ export class ContainerExecLaunchStrategy implements ProcessLaunchStrategy {
       command: this.execCommand,
       args: execArgs,
     };
-  }
-
-  /**
-   * Detect the best available shell inside the container by running
-   * `which bash || which zsh || which sh` via docker exec. Falls back
-   * to /bin/sh if detection fails. Called on-demand when a terminal is
-   * created without an explicit command.
-   */
-  async resolveDefaultShell(): Promise<string> {
-    // Try common shells in order of preference. Use `command -v` which is
-    // a POSIX builtin (more portable than `which`).
-    const shells = ["bash", "zsh", "sh"];
-    try {
-      const { execFile } = await import("node:child_process");
-      const result = await new Promise<string>((resolveFn, rejectFn) => {
-        execFile(
-          this.execCommand,
-          [...this.execArgsPrefix, "sh", "-c", shells.map((s) => `command -v ${s}`).join(" || ")],
-          { timeout: 5_000, encoding: "utf8" },
-          (err, stdout) => {
-            if (err) rejectFn(err);
-            else resolveFn(stdout.trim());
-          },
-        );
-      });
-      return result || "/bin/sh";
-    } catch {
-      return "/bin/sh";
-    }
   }
 
   resolveCwd(hostCwd: string): string {

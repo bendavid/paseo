@@ -32,7 +32,7 @@ import {
   resolveTerminalSubscriptionSnapshotMode,
   type TerminalRestoreOptions,
 } from "./terminal-restore.js";
-import { type TerminalSession } from "./terminal.js";
+import { resolveDefaultTerminalShell, type TerminalSession } from "./terminal.js";
 import type { TerminalManager, TerminalsChangedEvent } from "./terminal-manager.js";
 import type { TerminalActivity } from "@getpaseo/protocol/terminal-activity";
 import { terminalSubscriptionKey } from "@getpaseo/protocol/terminal-subscription-key";
@@ -556,22 +556,23 @@ export class TerminalSessionController {
         });
         return;
       }
-
       // Resolve the launch strategy in the parent process. The strategy
       // object can't be serialized across the worker boundary, so we
       // call wrapCommand here and pass the pre-wrapped command/args.
+      // When no explicit command is provided (the default terminal case),
+      // use the host's $SHELL — same as the host terminal path. If the
+      // shell doesn't exist inside the container, docker exec fails and
+      // terminal creation fails (no fallback to host).
       const launchStrategy = this.resolveLaunchStrategy
         ? await this.resolveLaunchStrategy(msg.cwd, workspaceId)
         : null;
       const isIsolated = launchStrategy?.isIsolated ?? false;
-      // When no explicit command is provided (the default terminal case),
-      // detect the shell available inside the container on-demand.
-      const fallbackShell =
-        isIsolated && !msg.command ? await launchStrategy!.resolveDefaultShell() : null;
       const terminalCommand = isIsolated
-        ? launchStrategy!.wrapCommand(msg.command ?? fallbackShell ?? "/bin/sh", msg.args ?? [], {
-            cwd: msg.cwd,
-          })
+        ? launchStrategy!.wrapCommand(
+            msg.command ?? resolveDefaultTerminalShell(),
+            msg.args ?? [],
+            { cwd: msg.cwd },
+          )
         : null;
       const session = await this.terminalManager.createTerminal({
         cwd: msg.cwd,
