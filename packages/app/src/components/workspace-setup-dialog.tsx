@@ -505,10 +505,11 @@ export function WorkspaceSetupDialog() {
       {createdWorkspace ? (
         <ContainerConfigChangedBanner serverId={serverId} workspaceId={createdWorkspace.id} />
       ) : null}
-      {containerAvailability?.hasDevContainerConfig ? (
+      {containerAvailability ? (
         <ContainerBackendSelector
           value={containerBackend}
           dockerAvailable={containerAvailability.dockerAvailable}
+          hasDevContainerConfig={containerAvailability.hasDevContainerConfig}
           onChange={setContainerBackend}
         />
       ) : null}

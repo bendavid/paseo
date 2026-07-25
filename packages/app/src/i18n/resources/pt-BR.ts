@@ -1307,6 +1307,7 @@ export const ptBR: TranslationResources = {
       host: "Host",
       devcontainer: "Contêiner de desenvolvimento",
       dockerUnavailable: "Docker não está disponível",
+      noDevContainerConfig: "Nenhum devcontainer.json encontrado neste diretório",
     },
   },
   onboarding: {

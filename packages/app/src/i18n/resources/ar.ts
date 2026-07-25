@@ -1279,6 +1279,7 @@ export const ar: TranslationResources = {
       host: "المضيف",
       devcontainer: "حاوية التطوير",
       dockerUnavailable: "Docker غير متاح",
+      noDevContainerConfig: "لم يتم العثور على devcontainer.json في هذا الدليل",
     },
   },
   onboarding: {

@@ -1311,6 +1311,7 @@ export const ru: TranslationResources = {
       host: "Хост",
       devcontainer: "Контейнер разработки",
       dockerUnavailable: "Docker недоступен",
+      noDevContainerConfig: "В этом каталоге не найден devcontainer.json",
     },
   },
   onboarding: {

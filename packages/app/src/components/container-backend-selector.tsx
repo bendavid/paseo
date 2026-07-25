@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Pressable, View, Text } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
@@ -6,18 +6,37 @@ import type { Theme } from "@/styles/theme";
 
 export interface ContainerBackendSelectorProps {
   value: "host" | "devcontainer";
+  /** Whether docker is installed and available on the host */
   dockerAvailable: boolean;
+  /** Whether a devcontainer.json exists in the project directory */
+  hasDevContainerConfig: boolean;
   onChange: (value: "host" | "devcontainer") => void;
 }
 
 export function ContainerBackendSelector({
   value,
   dockerAvailable,
+  hasDevContainerConfig,
   onChange,
 }: ContainerBackendSelectorProps) {
   const { t } = useTranslation();
   const selectHost = useCallback(() => onChange("host"), [onChange]);
   const selectDevcontainer = useCallback(() => onChange("devcontainer"), [onChange]);
+  const devContainerEnabled = dockerAvailable && hasDevContainerConfig;
+  let backendHint: ReactNode = null;
+  if (!dockerAvailable) {
+    backendHint = (
+      <Text style={styles.backendHint}>
+        {t("workspaceSetup.containerBackend.dockerUnavailable")}
+      </Text>
+    );
+  } else if (!hasDevContainerConfig) {
+    backendHint = (
+      <Text style={styles.backendHint}>
+        {t("workspaceSetup.containerBackend.noDevContainerConfig")}
+      </Text>
+    );
+  }
   return (
     <View style={styles.backendSelector}>
       <Text style={styles.backendLabel}>{t("workspaceSetup.containerBackend.label")}</Text>
@@ -32,9 +51,9 @@ export function ContainerBackendSelector({
           style={[
             styles.backendOption,
             value === "devcontainer" && styles.backendOptionSelected,
-            !dockerAvailable && styles.backendOptionDisabled,
+            !devContainerEnabled && styles.backendOptionDisabled,
           ]}
-          disabled={!dockerAvailable}
+          disabled={!devContainerEnabled}
           onPress={selectDevcontainer}
         >
           <Text style={styles.backendOptionText}>
@@ -42,11 +61,7 @@ export function ContainerBackendSelector({
           </Text>
         </Pressable>
       </View>
-      {!dockerAvailable ? (
-        <Text style={styles.backendHint}>
-          {t("workspaceSetup.containerBackend.dockerUnavailable")}
-        </Text>
-      ) : null}
+      {backendHint}
     </View>
   );
 }

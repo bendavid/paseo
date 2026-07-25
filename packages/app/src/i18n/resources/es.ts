@@ -1321,6 +1321,7 @@ export const es: TranslationResources = {
       host: "Host",
       devcontainer: "Contenedor de desarrollo",
       dockerUnavailable: "Docker no está disponible",
+      noDevContainerConfig: "No se encontró devcontainer.json en este directorio",
     },
   },
   onboarding: {

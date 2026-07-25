@@ -1293,6 +1293,7 @@ export const ja: TranslationResources = {
       host: "ホスト",
       devcontainer: "Dev Container",
       dockerUnavailable: "Dockerは利用できません",
+      noDevContainerConfig: "このディレクトリにdevcontainer.jsonが見つかりません",
     },
   },
   onboarding: {

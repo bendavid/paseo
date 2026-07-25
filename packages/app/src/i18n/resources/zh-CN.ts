@@ -1258,6 +1258,7 @@ export const zhCN: TranslationResources = {
       host: "主机",
       devcontainer: "开发容器",
       dockerUnavailable: "Docker 不可用",
+      noDevContainerConfig: "在此目录中未找到 devcontainer.json",
     },
   },
   onboarding: {

@@ -1290,6 +1290,7 @@ export const en = {
       host: "Host",
       devcontainer: "Dev Container",
       dockerUnavailable: "Docker is not available",
+      noDevContainerConfig: "No devcontainer.json found in this directory",
     },
   },
   onboarding: {

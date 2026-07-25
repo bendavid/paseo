@@ -329,7 +329,7 @@ describe("normalizeWorkspaceDescriptor preserves container fields", () => {
 });
 
 describe("ContainerBackendSelector", () => {
-  it("renders both Host and Dev Container options when hasDevContainerConfig is true", async () => {
+  it("renders both Host and Dev Container options when available", async () => {
     const container = document.createElement("div");
     document.body.appendChild(container);
     const root = createRoot(container);
@@ -338,6 +338,7 @@ describe("ContainerBackendSelector", () => {
         React.createElement(ContainerBackendSelector, {
           value: "host",
           dockerAvailable: true,
+          hasDevContainerConfig: true,
           onChange: () => {},
         }),
       );
@@ -358,6 +359,7 @@ describe("ContainerBackendSelector", () => {
         React.createElement(ContainerBackendSelector, {
           value: "host",
           dockerAvailable: false,
+          hasDevContainerConfig: true,
           onChange: () => {},
         }),
       );
@@ -367,7 +369,7 @@ describe("ContainerBackendSelector", () => {
     document.body.removeChild(container);
   });
 
-  it("does not show docker unavailable hint when docker is available", async () => {
+  it("shows no devcontainer config hint when config is missing", async () => {
     const container = document.createElement("div");
     document.body.appendChild(container);
     const root = createRoot(container);
@@ -376,11 +378,32 @@ describe("ContainerBackendSelector", () => {
         React.createElement(ContainerBackendSelector, {
           value: "host",
           dockerAvailable: true,
+          hasDevContainerConfig: false,
+          onChange: () => {},
+        }),
+      );
+    });
+    expect(container.textContent).toContain("workspaceSetup.containerBackend.noDevContainerConfig");
+    root.unmount();
+    document.body.removeChild(container);
+  });
+
+  it("shows no hints when docker and config are both available", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(
+        React.createElement(ContainerBackendSelector, {
+          value: "host",
+          dockerAvailable: true,
+          hasDevContainerConfig: true,
           onChange: () => {},
         }),
       );
     });
     expect(container.textContent).not.toContain("dockerUnavailable");
+    expect(container.textContent).not.toContain("noDevContainerConfig");
     root.unmount();
     document.body.removeChild(container);
   });
@@ -395,6 +418,7 @@ describe("ContainerBackendSelector", () => {
         React.createElement(ContainerBackendSelector, {
           value: "host",
           dockerAvailable: true,
+          hasDevContainerConfig: true,
           onChange,
         }),
       );
