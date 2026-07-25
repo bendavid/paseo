@@ -378,6 +378,7 @@ export class ProviderCatalogSession {
       await this.providerSnapshotManager.refreshSnapshotForCwd({
         cwd: expandTilde(msg.cwd),
         providers: msg.providers,
+        ...(msg.containerBackend ? { containerBackend: msg.containerBackend } : {}),
       });
     } else {
       await this.providerSnapshotManager.refreshSettingsSnapshot({

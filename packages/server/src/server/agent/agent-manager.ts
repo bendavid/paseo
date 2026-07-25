@@ -646,14 +646,20 @@ export class AgentManager {
   }
 
   /**
-   * Strict launch strategy resolver for workspace-scoped catalog/metadata
-   * operations. Throws when the container isn't running — the caller decides
-   * how to handle the error (listImportableSessions returns [], archive is
-   * best-effort, unarchive propagates).
+   * Lenient launch strategy resolver for catalog/metadata operations.
+   * Tries the container first, falls back to host if the container isn't
+   * running or doesn't have the tool. Catalog discovery is a read-only
+   * probe — the host's answer is safe when the container can't answer.
+   * Agent execution uses the strict resolver (buildLaunchContext) which
+   * throws rather than falling back.
    */
   private async resolveLaunchStrategyForCwd(cwd: string): Promise<ProcessLaunchStrategy | null> {
     if (!this.resolveLaunchStrategy) return null;
-    return await this.resolveLaunchStrategy(cwd);
+    try {
+      return await this.resolveLaunchStrategy(cwd);
+    } catch {
+      return null;
+    }
   }
 
   private configurePaseoTools(options: AgentManagerOptions): void {

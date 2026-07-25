@@ -838,17 +838,23 @@ export async function createPaseoDaemon(
     managedProcesses,
     isDev: config.isDev === true,
     extraClients: config.agentClients,
-    resolveLaunchStrategy: async (cwd) => {
+    resolveLaunchStrategy: async (cwd, containerBackendOverride) => {
       if (!launchStrategyRegistry) return null;
-      // Look up the workspace by cwd to check containerBackend.
-      const workspaces = await workspaceRegistry?.list();
-      const workspaceId = workspaces ? resolveWorkspaceIdForPath(cwd, workspaces) : null;
-      if (workspaceId) {
-        const workspace = await workspaceRegistry?.get(workspaceId);
-        if (workspace?.containerBackend === "host") return null;
+      // Use the override if provided (new-workspace screen where the
+      // workspace doesn't exist yet). Otherwise look up the workspace.
+      let backend: "host" | "devcontainer" | undefined = containerBackendOverride;
+      if (!backend) {
+        const workspaces = await workspaceRegistry?.list();
+        const workspaceId = workspaces ? resolveWorkspaceIdForPath(cwd, workspaces) : null;
+        if (workspaceId) {
+          const workspace = await workspaceRegistry?.get(workspaceId);
+          backend = workspace?.containerBackend;
+        }
       }
+      if (backend === "host") return null;
       // Strict: workspace-scoped catalog refresh must use the container's
-      // tool, not the host's. Throws if the container isn't running.
+      // tool, not the host's. Throws if the container isn't running — the
+      // error surfaces in the snapshot entry.
       const strategy = await launchStrategyRegistry.awaitStrategy(cwd);
       if (!strategy.isIsolated) {
         throw new Error("Container is not running for this workspace");

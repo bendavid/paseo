@@ -842,6 +842,13 @@ export const WorkspacePinSetRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const WorkspaceContainerBackendSetRequestSchema = z.object({
+  type: z.literal("workspace.container_backend.set.request"),
+  workspaceId: z.string(),
+  containerBackend: z.enum(["host", "devcontainer"]),
+  requestId: z.string(),
+});
+
 export const WorkspaceRecoveryInspectRequestSchema = z.object({
   type: z.literal("workspace.recovery.inspect.request"),
   workspaceId: z.string(),
@@ -1296,6 +1303,11 @@ export const RefreshProvidersSnapshotRequestMessageSchema = z.object({
   type: z.literal("refresh_providers_snapshot_request"),
   cwd: z.string().optional(),
   providers: z.array(AgentProviderSchema).optional(),
+  // COMPAT(devContainers): added in v0.2.0. Overrides the workspace's
+  // containerBackend for this refresh — used by the new-workspace screen
+  // where the workspace doesn't exist yet. Absent means use the workspace's
+  // persisted containerBackend (or "host" for global scope).
+  containerBackend: z.enum(["host", "devcontainer"]).optional(),
   requestId: z.string(),
 });
 
@@ -1547,6 +1559,19 @@ export const WorkspacePinSetResponsePayloadSchema = z.object({
 export const WorkspacePinSetResponseSchema = z.object({
   type: z.literal("workspace.pin.set.response"),
   payload: WorkspacePinSetResponsePayloadSchema,
+});
+
+export const WorkspaceContainerBackendSetResponsePayloadSchema = z.object({
+  requestId: z.string(),
+  workspaceId: z.string(),
+  accepted: z.boolean(),
+  containerBackend: z.enum(["host", "devcontainer"]).nullable(),
+  error: z.string().nullable(),
+});
+
+export const WorkspaceContainerBackendSetResponseSchema = z.object({
+  type: z.literal("workspace.container_backend.set.response"),
+  payload: WorkspaceContainerBackendSetResponsePayloadSchema,
 });
 
 export const WorkspaceRecoveryStateSchema = z.discriminatedUnion("kind", [
@@ -2514,6 +2539,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ProjectRemoveRequestSchema,
   WorkspaceTitleSetRequestSchema,
   WorkspacePinSetRequestSchema,
+  WorkspaceContainerBackendSetRequestSchema,
   WorkspaceRecoveryInspectRequestSchema,
   WorkspaceRecoveryRestoreRequestSchema,
   SetVoiceModeMessageSchema,
@@ -5327,6 +5353,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ProjectRemoveResponseSchema,
   WorkspaceTitleSetResponseSchema,
   WorkspacePinSetResponseSchema,
+  WorkspaceContainerBackendSetResponseSchema,
   WorkspaceRecoveryInspectResponseSchema,
   WorkspaceRecoveryRestoreResponseSchema,
   WaitForFinishResponseMessageSchema,
@@ -5518,6 +5545,12 @@ export type WorkspaceTitleSetResponsePayload = z.infer<
 >;
 export type WorkspacePinSetResponse = z.infer<typeof WorkspacePinSetResponseSchema>;
 export type WorkspacePinSetResponsePayload = z.infer<typeof WorkspacePinSetResponsePayloadSchema>;
+export type WorkspaceContainerBackendSetResponse = z.infer<
+  typeof WorkspaceContainerBackendSetResponseSchema
+>;
+export type WorkspaceContainerBackendSetResponsePayload = z.infer<
+  typeof WorkspaceContainerBackendSetResponsePayloadSchema
+>;
 export type WorkspaceRecoveryState = z.infer<typeof WorkspaceRecoveryStateSchema>;
 export type WorkspaceRecoveryInspectResponse = z.infer<
   typeof WorkspaceRecoveryInspectResponseSchema
@@ -5654,6 +5687,9 @@ export type LoopInspectRequest = z.infer<typeof LoopInspectRequestSchema>;
 export type LoopLogsRequest = z.infer<typeof LoopLogsRequestSchema>;
 export type LoopStopRequest = z.infer<typeof LoopStopRequestSchema>;
 export type ResumeAgentRequestMessage = z.infer<typeof ResumeAgentRequestMessageSchema>;
+export type WorkspaceContainerBackendSetRequest = z.infer<
+  typeof WorkspaceContainerBackendSetRequestSchema
+>;
 export type DeleteAgentRequestMessage = z.infer<typeof DeleteAgentRequestMessageSchema>;
 export type UpdateAgentRequestMessage = z.infer<typeof UpdateAgentRequestMessageSchema>;
 export type ProjectRenameRequest = z.infer<typeof ProjectRenameRequestSchema>;

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { ReactElement, RefObject } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { refreshAndApplyProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { Pressable, StyleSheet as RNStyleSheet, Text, View } from "react-native";
@@ -1718,6 +1720,21 @@ export function NewWorkspaceScreen({
   });
   const { containerBackend, setContainerBackend, containerAvailability } =
     useContainerBackendAvailability(client, selectedSourceDirectory ?? "");
+  const queryClient = useQueryClient();
+  // Refresh the provider snapshot when the container backend changes so model
+  // selection re-probes with the correct backend. "host" clears any container
+  // error; "devcontainer" probes the container (which may error if the tool
+  // isn't installed there — that's correct).
+  useEffect(() => {
+    if (!client || !selectedSourceDirectory) return;
+    void refreshAndApplyProvidersSnapshot({
+      client,
+      queryClient,
+      serverId: selectedServerId,
+      cwd: selectedSourceDirectory,
+      containerBackend,
+    });
+  }, [client, queryClient, selectedServerId, selectedSourceDirectory, containerBackend]);
   const projectIconTargets = useMemo(
     () =>
       projects.flatMap((project) => {

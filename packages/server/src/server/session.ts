@@ -2169,6 +2169,12 @@ export class Session {
         return this.handleWorkspaceTitleSetRequest(msg.workspaceId, msg.title, msg.requestId);
       case "workspace.pin.set.request":
         return this.handleWorkspacePinSetRequest(msg.workspaceId, msg.pinned, msg.requestId);
+      case "workspace.container_backend.set.request":
+        return this.handleWorkspaceContainerBackendSetRequest(
+          msg.workspaceId,
+          msg.containerBackend,
+          msg.requestId,
+        );
       default:
         return undefined;
     }
@@ -2937,6 +2943,69 @@ export class Session {
         },
       });
       emitResponse(false, null, getErrorMessageOr(error, "Failed to pin workspace"));
+    }
+  }
+
+  private async handleWorkspaceContainerBackendSetRequest(
+    workspaceId: string,
+    containerBackend: "host" | "devcontainer",
+    requestId: string,
+  ): Promise<void> {
+    const logContext = { workspaceId, containerBackend, requestId };
+    this.sessionLogger.info(logContext, "session: workspace.container_backend.set.request");
+    const emitResponse = (
+      accepted: boolean,
+      backend: "host" | "devcontainer" | null,
+      error: string | null,
+    ) => {
+      this.emit({
+        type: "workspace.container_backend.set.response",
+        payload: { requestId, workspaceId, accepted, containerBackend: backend, error },
+      });
+    };
+
+    try {
+      const updatedAt = new Date().toISOString();
+      const updated = await this.workspaceRegistry.update(workspaceId, (existing) => ({
+        ...existing,
+        containerBackend,
+        updatedAt,
+      }));
+      if (!updated) {
+        emitResponse(false, null, "Workspace not found");
+        return;
+      }
+      emitResponse(true, containerBackend, null);
+
+      // Emit workspace update so the UI reflects the new containerBackend.
+      await this.emitWorkspaceUpdatesForWorkspaceIds([workspaceId]);
+
+      // Refresh the provider snapshot for this workspace's cwd so model
+      // selection re-probes with the new backend. When switching to "host",
+      // the snapshot clears any container error. When switching to
+      // "devcontainer", it probes the container (which may error if the tool
+      // isn't installed there — that's correct).
+      if (updated.cwd) {
+        await this.providerSnapshotManager.refreshSnapshotForCwd({ cwd: updated.cwd });
+      }
+
+      // Start or stop the container for this workspace.
+      void this.maybeStartContainerForWorkspace(updated);
+    } catch (error) {
+      this.sessionLogger.error(
+        { ...logContext, err: error },
+        "session: workspace.container_backend.set.request error",
+      );
+      this.emit({
+        type: "activity_log",
+        payload: {
+          id: uuidv4(),
+          timestamp: new Date(),
+          type: "error",
+          content: `Failed to set container backend: ${getErrorMessage(error)}`,
+        },
+      });
+      emitResponse(false, null, getErrorMessageOr(error, "Failed to set container backend"));
     }
   }
 

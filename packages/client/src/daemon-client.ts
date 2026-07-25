@@ -2568,6 +2568,26 @@ export class DaemonClient {
     return { pinnedAt: payload.pinnedAt };
   }
 
+  async setWorkspaceContainerBackend(
+    workspaceId: string,
+    containerBackend: "host" | "devcontainer",
+    requestId?: string,
+  ): Promise<{ containerBackend: "host" | "devcontainer" }> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "workspace.container_backend.set.request",
+        workspaceId,
+        containerBackend,
+      },
+      responseType: "workspace.container_backend.set.response",
+    });
+    if (!payload.accepted || !payload.containerBackend) {
+      throw new Error(payload.error ?? "setWorkspaceContainerBackend rejected");
+    }
+    return { containerBackend: payload.containerBackend };
+  }
+
   async inspectWorkspaceRecovery(
     workspaceId: string,
     requestId?: string,
@@ -4480,6 +4500,7 @@ export class DaemonClient {
   async refreshProvidersSnapshot(options?: {
     cwd?: string;
     providers?: AgentProvider[];
+    containerBackend?: "host" | "devcontainer";
     requestId?: string;
   }): Promise<RefreshProvidersSnapshotPayload> {
     return this.sendCorrelatedSessionRequest({
@@ -4488,6 +4509,7 @@ export class DaemonClient {
         type: "refresh_providers_snapshot_request",
         cwd: options?.cwd,
         providers: options?.providers,
+        ...(options?.containerBackend ? { containerBackend: options.containerBackend } : {}),
       },
       responseType: "refresh_providers_snapshot_response",
       timeout: 120000,

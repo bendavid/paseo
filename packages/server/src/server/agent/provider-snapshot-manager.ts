@@ -94,13 +94,17 @@ export interface ProviderSnapshotManagerOptions {
   extraClients?: Partial<Record<AgentProvider, AgentClient>>;
   refreshTimeoutMs?: number;
   diagnosticTimeoutMs?: number;
-  /** Resolves a launch strategy for a cwd, or null for host execution. */
-  resolveLaunchStrategy?: (cwd: string) => Promise<ProcessLaunchStrategy | null>;
+  resolveLaunchStrategy?: (
+    cwd: string,
+    containerBackendOverride?: "host" | "devcontainer",
+  ) => Promise<ProcessLaunchStrategy | null>;
 }
 
 interface ProviderSnapshotRefreshOptions {
   cwd: string;
   providers?: AgentProvider[];
+  /** Overrides the workspace's containerBackend for this refresh. */
+  containerBackend?: "host" | "devcontainer";
 }
 
 interface ProviderSnapshotWarmUpOptions {
@@ -161,6 +165,8 @@ interface ProviderLoadOptions {
   providers: AgentProvider[];
   catalogScope: ProviderCatalogScope;
   force: boolean;
+  /** Overrides the workspace's containerBackend for this load. */
+  containerBackend?: "host" | "devcontainer";
 }
 interface ProviderLoad {
   promise: Promise<void>;
@@ -180,12 +186,15 @@ export class ProviderSnapshotManager {
   private destroyed = false;
   private readonly refreshTimeoutMs: number;
   private readonly diagnosticTimeoutMs: number;
+  private readonly resolveLaunchStrategy?: (
+    cwd: string,
+    containerBackendOverride?: "host" | "devcontainer",
+  ) => Promise<ProcessLaunchStrategy | null>;
   private readonly logger: Logger;
   private readonly workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">;
   private readonly managedProcesses?: ManagedProcessRegistry;
   private readonly isDev: boolean;
   private readonly extraClients: Partial<Record<AgentProvider, AgentClient>>;
-  private readonly resolveLaunchStrategy?: (cwd: string) => Promise<ProcessLaunchStrategy | null>;
   private runtimeSettings: AgentProviderRuntimeSettingsMap | undefined;
   private providerOverrides: Record<string, ProviderOverride> | undefined;
   private baseProviderOverrides: Record<string, ProviderOverride> | undefined;
@@ -222,7 +231,11 @@ export class ProviderSnapshotManager {
     const providers = this.resolveRefreshProviders(options.providers);
     this.resetSnapshotToLoading(snapshotCwd, providers, { preserveExisting: false });
     this.emitChange(snapshotCwd);
-    await this.refreshProviders(target, providers ?? this.getProviderIds());
+    await this.refreshProviders(
+      target,
+      providers ?? this.getProviderIds(),
+      options.containerBackend,
+    );
   }
 
   async refreshSettingsSnapshot(
@@ -638,15 +651,16 @@ export class ProviderSnapshotManager {
   private async refreshProviders(
     target: ProviderSnapshotTarget,
     providers: AgentProvider[],
+    containerBackend?: "host" | "devcontainer",
   ): Promise<void> {
     await this.loadProviders({
       snapshotCwd: target.snapshotCwd,
       catalogScope: target.catalogScope,
       providers,
       force: true,
+      ...(containerBackend ? { containerBackend } : {}),
     });
   }
-
   private resolveProvidersToWarm(cwd: string, providers?: AgentProvider[]): AgentProvider[] {
     const providersToInspect = providers ?? this.getProviderIds();
     const snapshot = this.snapshots.get(cwd);
@@ -738,6 +752,7 @@ export class ProviderSnapshotManager {
           definition,
           load,
           force: options.force,
+          containerBackend: options.containerBackend,
         }),
       )
       .finally(() => {
@@ -759,6 +774,7 @@ export class ProviderSnapshotManager {
     definition: ProviderDefinition;
     load: ProviderLoad;
     force: boolean;
+    containerBackend?: "host" | "devcontainer";
   }): Promise<void> {
     const { snapshotCwd, catalogScope, provider, definition, load, force } = options;
     const snapshot = this.getOrCreateSnapshot(snapshotCwd);
@@ -798,7 +814,8 @@ export class ProviderSnapshotManager {
       const catalogOptions = createFetchCatalogOptions(catalogScope, force);
       const launchStrategy =
         catalogOptions.scope === "workspace" && this.resolveLaunchStrategy
-          ? ((await this.resolveLaunchStrategy(catalogOptions.cwd)) ?? undefined)
+          ? ((await this.resolveLaunchStrategy(catalogOptions.cwd, options.containerBackend)) ??
+            undefined)
           : undefined;
       const catalog = await withTimeout(
         definition.fetchCatalog(

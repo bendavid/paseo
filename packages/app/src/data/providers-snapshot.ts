@@ -21,11 +21,13 @@ export function providersSnapshotQueryKey(serverId: string | null, cwd?: string 
 export function providersSnapshotRequestOptions(input: {
   cwd?: string | null;
   providers?: AgentProvider[];
+  containerBackend?: "host" | "devcontainer";
 }) {
   const normalizedCwd = normalizeProvidersSnapshotCwd(input.cwd);
   return {
     ...(normalizedCwd ? { cwd: normalizedCwd } : {}),
     ...(input.providers ? { providers: input.providers } : {}),
+    ...(input.containerBackend ? { containerBackend: input.containerBackend } : {}),
   };
 }
 
