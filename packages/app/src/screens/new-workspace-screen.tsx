@@ -38,6 +38,8 @@ import {
   useHosts,
   type HostRuntimeConnectionStatus,
 } from "@/runtime/host-runtime";
+import { ContainerBackendSelector } from "@/components/container-backend-selector";
+import { useContainerBackendAvailability } from "@/hooks/use-container-backend-availability";
 import { useHostFeature, useHostFeatureMap } from "@/runtime/host-features";
 import type { HostProfile } from "@/types/host-connection";
 import {
@@ -818,6 +820,7 @@ async function createMultiplicityWorkspace(input: {
   ) => void;
   serverId: string;
   createFailedMessage: string;
+  containerBackend: "host" | "devcontainer";
 }): Promise<ReturnType<typeof normalizeWorkspaceDescriptor>> {
   const isWorktree = input.isolation === "worktree";
   const checkoutRequest = isWorktree
@@ -842,6 +845,7 @@ async function createMultiplicityWorkspace(input: {
           projectId: input.project.projectKey,
         },
     ...(firstAgentContext ? { firstAgentContext } : {}),
+    containerBackend: input.containerBackend,
   });
   if (payload.error || !payload.workspace) {
     throw new Error(payload.error ?? input.createFailedMessage);
@@ -1502,6 +1506,7 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
   );
 }
 
+// oxlint-disable-next-line eslint(complexity): screen has many UI states
 export function NewWorkspaceScreen({
   serverId,
   sourceDirectory: sourceDirectoryProp,
@@ -1556,8 +1561,6 @@ export function NewWorkspaceScreen({
     const timer = setTimeout(() => setDebouncedPickerSearchQuery(trimmed), 180);
     return () => clearTimeout(timer);
   }, [pickerSearchQuery]);
-
-  const workspace = createdWorkspace;
   const isPending = isNewWorkspacePending({ pendingAction, isDraftHandoffActive });
   const client = useHostRuntimeClient(selectedServerId);
   const isConnected = useHostRuntimeIsConnected(selectedServerId);
@@ -1576,6 +1579,8 @@ export function NewWorkspaceScreen({
     lastActiveProject,
     allowAllProjects: supportsWorkspaceMultiplicity,
   });
+  const { containerBackend, setContainerBackend, containerAvailability } =
+    useContainerBackendAvailability(client, selectedSourceDirectory ?? "");
   const projectIconTargets = useMemo(
     () =>
       projects.flatMap((project) => {
@@ -1594,6 +1599,7 @@ export function NewWorkspaceScreen({
   const draftKey = buildNewWorkspaceDraftKey(draftId);
   const forkDraftSetup = usePendingWorkspaceDraftSetup(draftId);
   const draftContextScopeKey = useDraftWorkspaceAttachmentScopeKey(draftId);
+  const workspace = createdWorkspace;
   const visibleDraftContextScopeKeys = useMemo(
     () => resolveVisibleDraftContextScopeKeys({ isDraftHandoffActive, draftContextScopeKey }),
     [draftContextScopeKey, isDraftHandoffActive],
@@ -1911,6 +1917,7 @@ export function NewWorkspaceScreen({
             mergeWorkspaces,
             serverId: selectedServerId,
             createFailedMessage: t("newWorkspace.errors.createWorktreeFailed"),
+            containerBackend,
           })
         : await createAndMergeWorkspace({
             client: withConnectedClient(),
@@ -1924,6 +1931,7 @@ export function NewWorkspaceScreen({
     },
     [
       buildCreateWorktreeInput,
+      containerBackend,
       createdWorkspace,
       currentBranch,
       effectiveIsolation,
@@ -2122,6 +2130,14 @@ export function NewWorkspaceScreen({
             <Text style={styles.composerTitle}>{t("newWorkspace.title")}</Text>
           </View>
           {formStack}
+          {containerAvailability ? (
+            <ContainerBackendSelector
+              value={containerBackend}
+              dockerAvailable={containerAvailability.dockerAvailable}
+              hasDevContainerConfig={containerAvailability.hasDevContainerConfig}
+              onChange={setContainerBackend}
+            />
+          ) : null}
           <Composer
             externalKeyboardShift
             agentId={draftKey}

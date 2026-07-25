@@ -3,6 +3,7 @@ import { Image, Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { createNameId } from "mnemonic-id";
+import { useContainerBackendAvailability } from "@/hooks/use-container-backend-availability";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { FileDropZone } from "@/components/file-drop/file-drop-zone";
 import { Composer } from "@/composer";
@@ -158,62 +159,6 @@ function buildCreateAgentOptions({
     ...(encodedImages && encodedImages.length > 0 ? { images: encodedImages } : {}),
     ...(attachments.length > 0 ? { attachments } : {}),
   };
-}
-
-function useContainerBackendAvailability(
-  client: ReturnType<typeof useHostRuntimeClient>,
-  sourceDirectory: string,
-): {
-  containerBackend: "host" | "devcontainer";
-  setContainerBackend: (value: "host" | "devcontainer") => void;
-  containerAvailability: { dockerAvailable: boolean; hasDevContainerConfig: boolean } | null;
-} {
-  const [containerBackend, setContainerBackend] = useState<"host" | "devcontainer">("host");
-  const [containerAvailability, setContainerAvailability] = useState<{
-    dockerAvailable: boolean;
-    hasDevContainerConfig: boolean;
-  } | null>(null);
-
-  useEffect(() => {
-    console.log("[WorkspaceSetup] availability effect", {
-      hasClient: Boolean(client),
-      sourceDirectory,
-    });
-    if (!client || !sourceDirectory) {
-      console.log("[WorkspaceSetup] skipping availability check:", {
-        reason: !client ? "no client" : "no sourceDirectory",
-      });
-      setContainerAvailability(null);
-      setContainerBackend("host");
-      return;
-    }
-    console.log("[WorkspaceSetup] calling checkContainerAvailability for", sourceDirectory);
-    let cancelled = false;
-    client
-      .checkContainerAvailability(sourceDirectory)
-      .then((result) => {
-        console.log("[WorkspaceSetup] availability result:", result);
-        if (cancelled) return;
-        setContainerAvailability({
-          dockerAvailable: result.dockerAvailable,
-          hasDevContainerConfig: result.hasDevContainerConfig,
-        });
-        if (result.dockerAvailable && result.hasDevContainerConfig) {
-          setContainerBackend("devcontainer");
-        }
-        return undefined;
-      })
-      .catch((error) => {
-        if (cancelled) return;
-        console.error("[WorkspaceSetup] Failed to check container availability:", error);
-        setContainerAvailability(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [client, sourceDirectory]);
-
-  return { containerBackend, setContainerBackend, containerAvailability };
 }
 
 // oxlint-disable-next-line eslint(complexity): dialog has many UI states
