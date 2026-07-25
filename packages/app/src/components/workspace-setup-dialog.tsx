@@ -175,15 +175,24 @@ function useContainerBackendAvailability(
   } | null>(null);
 
   useEffect(() => {
+    console.log("[WorkspaceSetup] availability effect", {
+      hasClient: Boolean(client),
+      sourceDirectory,
+    });
     if (!client || !sourceDirectory) {
+      console.log("[WorkspaceSetup] skipping availability check:", {
+        reason: !client ? "no client" : "no sourceDirectory",
+      });
       setContainerAvailability(null);
       setContainerBackend("host");
       return;
     }
+    console.log("[WorkspaceSetup] calling checkContainerAvailability for", sourceDirectory);
     let cancelled = false;
     client
       .checkContainerAvailability(sourceDirectory)
       .then((result) => {
+        console.log("[WorkspaceSetup] availability result:", result);
         if (cancelled) return;
         setContainerAvailability({
           dockerAvailable: result.dockerAvailable,
