@@ -59,6 +59,13 @@ export interface ProcessLaunchStrategy {
 
   /** Whether this strategy executes inside an isolated environment */
   readonly isIsolated: boolean;
+
+  /**
+   * The default shell to use when no explicit command is provided.
+   * For local execution, this is the host's $SHELL.
+   * For container execution, this is detected inside the container.
+   */
+  readonly defaultShell: string;
 }
 
 /**
@@ -66,6 +73,7 @@ export interface ProcessLaunchStrategy {
  */
 export class LocalLaunchStrategy implements ProcessLaunchStrategy {
   readonly isIsolated = false;
+  readonly defaultShell = process.env.SHELL || "/bin/sh";
 
   spawn(command: string, args: string[], options?: LaunchSpawnOptions): ChildProcess {
     // Defer import to avoid circular module loading at module-eval time.
@@ -95,6 +103,7 @@ export class LocalLaunchStrategy implements ProcessLaunchStrategy {
  */
 export class ContainerExecLaunchStrategy implements ProcessLaunchStrategy {
   readonly isIsolated = true;
+  readonly defaultShell: string;
 
   private readonly handle: ExecutionHandle;
   private readonly execCommand: string;
@@ -113,6 +122,7 @@ export class ContainerExecLaunchStrategy implements ProcessLaunchStrategy {
     this.execCommand = options.execCommand;
     this.execArgsPrefix = options.execArgsPrefix;
     this.hostWorkspaceFolder = options.hostWorkspaceFolder;
+    this.defaultShell = options.handle.defaultShell ?? "/bin/sh";
   }
 
   spawn(command: string, args: string[], options?: LaunchSpawnOptions): ChildProcess {

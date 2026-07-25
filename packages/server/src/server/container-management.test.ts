@@ -42,13 +42,11 @@ import {
 import { execCommand } from "../utils/spawn.js";
 
 // ---------------------------------------------------------------------------
-// Test helpers
-// ---------------------------------------------------------------------------
-
 const HANDLE: ExecutionHandle = {
   identifier: "abc123def456",
   remoteUser: "root",
   remoteWorkspaceFolder: "/workspaces/test",
+  defaultShell: "/bin/bash",
 };
 
 function createMockContainerBackend(
@@ -880,6 +878,35 @@ test("ContainerExecLaunchStrategy.wrapCommand produces valid docker exec for ter
   const wIndex = result.args.indexOf("-w");
   const idIndex = result.args.indexOf(HANDLE.identifier);
   expect(wIndex).toBeLessThan(idIndex);
+});
+
+test("ContainerExecLaunchStrategy.defaultShell uses handle.defaultShell when available", () => {
+  const strategy = new ContainerExecLaunchStrategy({
+    handle: HANDLE,
+    execCommand: "docker",
+    execArgsPrefix: ["exec", "-u", HANDLE.remoteUser, HANDLE.identifier],
+    hostWorkspaceFolder: "/tmp/test-workspace",
+  });
+
+  // The strategy should expose the container's detected default shell
+  // so the terminal controller can use it as the fallback command.
+  expect(strategy.defaultShell).toBe("/bin/bash");
+});
+
+test("ContainerExecLaunchStrategy.defaultShell falls back to /bin/sh when handle has no defaultShell", () => {
+  const handleWithoutShell: ExecutionHandle = {
+    identifier: "abc123",
+    remoteUser: "root",
+    remoteWorkspaceFolder: "/ws",
+  };
+  const strategy = new ContainerExecLaunchStrategy({
+    handle: handleWithoutShell,
+    execCommand: "docker",
+    execArgsPrefix: ["exec", "-u", handleWithoutShell.remoteUser, handleWithoutShell.identifier],
+    hostWorkspaceFolder: "/tmp/test",
+  });
+
+  expect(strategy.defaultShell).toBe("/bin/sh");
 });
 
 test("ContainerExecLaunchStrategy.wrapCommand produces valid docker exec with args", () => {

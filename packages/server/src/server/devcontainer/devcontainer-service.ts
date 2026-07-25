@@ -148,6 +148,31 @@ export function createDevContainerBackend(
       remoteWorkspaceFolder: parsed.remoteWorkspaceFolder,
     };
 
+    // Detect the best available shell inside the container.
+    // Runs `which bash || which zsh || which sh` via docker exec.
+    try {
+      const shellResult = await execCommand(
+        dockerBin,
+        [
+          "exec",
+          "-u",
+          handle.remoteUser,
+          handle.identifier,
+          "sh",
+          "-c",
+          "which bash || which zsh || which sh",
+        ],
+        { envMode: "internal", timeout: 5_000 },
+      );
+      const detectedShell = shellResult.stdout.trim();
+      if (detectedShell) {
+        handle.defaultShell = detectedShell;
+        logger.debug({ workspaceFolder, detectedShell }, "Detected container default shell");
+      }
+    } catch {
+      // Shell detection is best-effort; wrapCommand falls back to /bin/sh.
+    }
+
     handles.set(workspaceFolder, handle);
     logger.info(
       { workspaceFolder, identifier: handle.identifier, remoteUser: handle.remoteUser },

@@ -22,6 +22,8 @@ export interface ExecutionHandle {
   remoteUser: string;
   /** Workspace folder path inside the environment */
   remoteWorkspaceFolder: string;
+  /** Default shell detected inside the container (e.g. /bin/bash). Falls back to /bin/sh. */
+  defaultShell?: string;
 }
 
 /** Metadata about a running container, for display in the UI. */

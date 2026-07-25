@@ -567,7 +567,9 @@ export class TerminalSessionController {
         : null;
       const isIsolated = launchStrategy?.isIsolated ?? false;
       const terminalCommand = isIsolated
-        ? launchStrategy!.wrapCommand(msg.command ?? "/bin/sh", msg.args ?? [], { cwd: msg.cwd })
+        ? launchStrategy!.wrapCommand(msg.command ?? launchStrategy!.defaultShell, msg.args ?? [], {
+            cwd: msg.cwd,
+          })
         : null;
       const session = await this.terminalManager.createTerminal({
         cwd: msg.cwd,
