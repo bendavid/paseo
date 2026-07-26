@@ -592,18 +592,24 @@ export const fr: TranslationResources = {
       container: {
         running: "Exécution dans le conteneur",
         runningTooltip:
-          "Les agents, terminaux et git s'exécutent dans un environnement conteneurisé isolé",
+          "Les agents et les terminaux s'exécutent dans le conteneur de cet espace de travail",
         starting: "Démarrage du conteneur",
         startingTooltip:
           "Construction et démarrage de l'environnement conteneurisé. Les agents et terminaux attendront qu'il soit prêt.",
         stopped: "Conteneur arrêté",
         stoppedTooltip: "L'environnement conteneurisé n'est plus en cours d'exécution",
+        details: {
+          backend: "Backend",
+          image: "Image",
+          container: "Conteneur",
+          user: "Utilisateur",
+          started: "Démarré",
+        },
         configChangedTitle: "Configuration du conteneur modifiée",
         configChangedMessage:
           "Le devcontainer.json a changé depuis la construction du conteneur. Reconstruisez pour appliquer les modifications.",
-        rebuild: "Reconstruire le conteneur",
         dismiss: "Ignorer",
-        rebuildAction: "Reconstruire",
+        rebuildAction: "Reconstruire le conteneur",
         restartAction: "Redémarrer le conteneur",
         rebuildConfirmTitle: "Reconstruire le conteneur",
         rebuildConfirmMessage:

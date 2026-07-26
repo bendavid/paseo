@@ -107,6 +107,7 @@ import {
 } from "@/components/sidebar/sidebar-workspace-row-content";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { ContainerStatusTooltipBody } from "@/components/container-status-tooltip";
 import { Shortcut } from "@/components/ui/shortcut";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
@@ -670,14 +671,26 @@ function WorkspaceRowRightGroup({
   return (
     <>
       {workspace.containerStatus ? (
-        <ThemedContainer
-          size={12}
-          uniProps={
-            workspace.containerStatus === "running"
-              ? greenColorMapping
-              : foregroundMutedColorMapping
-          }
-        />
+        <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
+          <TooltipTrigger asChild>
+            <View testID={`sidebar-workspace-container-icon-${workspace.workspaceKey}`}>
+              <ThemedContainer
+                size={12}
+                uniProps={
+                  workspace.containerStatus === "running"
+                    ? greenColorMapping
+                    : foregroundMutedColorMapping
+                }
+              />
+            </View>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" align="center" offset={8} maxWidth={320}>
+            <ContainerStatusTooltipBody
+              containerStatus={workspace.containerStatus}
+              containerInfo={workspace.containerInfo}
+            />
+          </TooltipContent>
+        </Tooltip>
       ) : null}
       {isCreating ? (
         <Text style={styles.workspaceCreatingText}>{t("sidebar.workspace.status.creating")}</Text>

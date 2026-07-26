@@ -588,18 +588,24 @@ export const ja: TranslationResources = {
       },
       container: {
         running: "コンテナで実行中",
-        runningTooltip: "エージェント、ターミナル、git は分離されたコンテナ環境内で実行されます",
+        runningTooltip: "エージェントとターミナルはこのワークスペースのコンテナ内で実行されます",
         starting: "コンテナを起動中",
         startingTooltip:
           "コンテナ環境をビルドして起動しています。エージェントとターミナルは準備ができるまで待機します。",
         stopped: "コンテナが停止しました",
         stoppedTooltip: "コンテナ環境は実行されていません",
+        details: {
+          backend: "バックエンド",
+          image: "イメージ",
+          container: "コンテナ",
+          user: "ユーザー",
+          started: "開始",
+        },
         configChangedTitle: "コンテナ設定が変更されました",
         configChangedMessage:
           "コンテナのビルド後にdevcontainer.jsonが変更されました。変更を適用するには再ビルドしてください。",
-        rebuild: "コンテナを再ビルド",
         dismiss: "閉じる",
-        rebuildAction: "再ビルド",
+        rebuildAction: "コンテナを再ビルド",
         restartAction: "コンテナを再起動",
         rebuildConfirmTitle: "コンテナを再ビルド",
         rebuildConfirmMessage:

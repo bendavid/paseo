@@ -589,19 +589,24 @@ export const ptBR: TranslationResources = {
       },
       container: {
         running: "Executando em contêiner",
-        runningTooltip:
-          "Agentes, terminais e git são executados dentro de um ambiente de contêiner isolado",
+        runningTooltip: "Agentes e terminais são executados dentro do contêiner deste workspace",
         starting: "Iniciando contêiner",
         startingTooltip:
           "Construindo e iniciando o ambiente do contêiner. Agentes e terminais aguardarão até que esteja pronto.",
         stopped: "Contêiner parado",
         stoppedTooltip: "O ambiente do contêiner não está mais em execução",
+        details: {
+          backend: "Backend",
+          image: "Imagem",
+          container: "Contêiner",
+          user: "Usuário",
+          started: "Iniciado",
+        },
         configChangedTitle: "Configuração do contêiner alterada",
         configChangedMessage:
           "O devcontainer.json foi alterado desde a construção do contêiner. Reconstrua para aplicar as alterações.",
-        rebuild: "Reconstruir contêiner",
         dismiss: "Descartar",
-        rebuildAction: "Reconstruir",
+        rebuildAction: "Reconstruir contêiner",
         restartAction: "Reiniciar contêiner",
         rebuildConfirmTitle: "Reconstruir contêiner",
         rebuildConfirmMessage:

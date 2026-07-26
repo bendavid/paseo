@@ -583,18 +583,24 @@ export const en = {
       },
       container: {
         running: "Running in container",
-        runningTooltip: "Agents, terminals, and git run inside an isolated container environment",
+        runningTooltip: "Agents and terminals run inside this workspace's container",
         starting: "Starting container",
         startingTooltip:
           "Building and starting the container environment. Agents and terminals will wait until ready.",
         stopped: "Container stopped",
         stoppedTooltip: "The container environment is no longer running",
+        details: {
+          backend: "Backend",
+          image: "Image",
+          container: "Container",
+          user: "User",
+          started: "Started",
+        },
         configChangedTitle: "Container config changed",
         configChangedMessage:
           "The devcontainer.json has changed since the container was built. Rebuild to apply the changes.",
-        rebuild: "Rebuild container",
         dismiss: "Dismiss",
-        rebuildAction: "Rebuild",
+        rebuildAction: "Rebuild container",
         restartAction: "Restart container",
         rebuildConfirmTitle: "Rebuild container",
         rebuildConfirmMessage:

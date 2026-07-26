@@ -108,15 +108,16 @@ function createMockContainerBackend(
     getHandle(key: string) {
       return handles.get(key) ?? null;
     },
-    async getContainerInfo(ref: ContainerRef) {
-      const h = handles.get(ref.key);
+    getContainerInfo(key: string) {
+      const h = handles.get(key);
       if (!h) return null;
       return {
         backend: "devcontainer",
+        backendLabel: "Dev Container",
         containerId: h.identifier.slice(0, 12),
         containerName: "test-container",
         image: "test:latest",
-        startedAt: new Date().toISOString(),
+        startedAt: "2026-07-26T00:00:00.000Z",
         remoteUser: h.remoteUser,
       } satisfies ContainerInfo;
     },
@@ -420,6 +421,44 @@ test("describeWorkspaceRecord includes containerStatus running when container is
 
   expect(descriptor.containerStatus).toBe("running");
   expect(descriptor.hasDevContainerConfig).toBe(true);
+});
+
+test("the workspace descriptor carries the running container's details", async () => {
+  // The badge tooltip names the backend, image and user; it can only do that if
+  // the descriptor carries them. They must also arrive without a follow-up
+  // workspace update — a descriptor build is what a workspace update produces,
+  // so a build that emits one loops.
+  const cwd = makeDevcontainerDir();
+  const emitted: SessionOutboundMessage[] = [];
+  const backend = createMockContainerBackend({
+    hasConfig: () => true,
+    isAvailable: async () => true,
+    isAlreadyRunning: async () => true,
+  });
+
+  const session = createContainerTestSession({
+    backend,
+    workspaces: [makeWorkspace({ cwd, containerBackend: "devcontainer" })],
+    emitted,
+  });
+
+  const internals = asSessionInternals<{
+    describeWorkspaceRecord: (workspace: PersistedWorkspaceRecord) => Promise<{
+      containerInfo?: { backend: string; backendLabel?: string; image: string } | null;
+    }>;
+  }>(session);
+
+  const workspace = makeWorkspace({ cwd, containerBackend: "devcontainer" });
+  await internals.describeWorkspaceRecord(workspace);
+  await flushMicrotasks();
+  const descriptor = await internals.describeWorkspaceRecord(workspace);
+
+  expect(descriptor.containerInfo).toMatchObject({
+    backend: "devcontainer",
+    backendLabel: "Dev Container",
+    image: "test:latest",
+  });
+  expect(emitted.filter((m) => m.type === "workspace_update")).toHaveLength(0);
 });
 
 test("describeWorkspaceRecord includes containerStatus starting while container is starting", async () => {
@@ -829,32 +868,22 @@ dockerTest(
     // containerStatus should be "starting" (pending activation registered)
     expect(descriptor.containerStatus).toBe("starting");
 
-    // Wait for the container to actually start in the background.
-    // The maybeStartContainerForWorkspace IIFE runs isAvailable, isAlreadyRunning,
-    // then `devcontainer up` which pulls alpine:latest + starts the container.
-    // Poll getContainerInfo, which reports the container only once it is
-    // actually inspectable, rather than isAlreadyRunning, which flips as soon
-    // as `docker ps` sees the container.
+    // Wait for the container to actually start in the background. The
+    // maybeStartContainerForWorkspace IIFE runs isAvailable, isAlreadyRunning,
+    // then `devcontainer up`, which pulls alpine:latest and starts the
+    // container. Container details are recorded at that point, so their
+    // presence is the signal that the start finished.
     const { promise: containerReady, resolve: resolveContainerReady } =
       Promise.withResolvers<void>();
     const checkInterval = setInterval(() => {
-      backend
-        .getContainerInfo({ key: "ws-test", kind: "workspace", workspaceFolder: cwd })
-        .then((info) => {
-          if (info) {
-            clearInterval(checkInterval);
-            resolveContainerReady();
-          }
-          return undefined;
-        });
+      if (backend.getContainerInfo("ws-test")) {
+        clearInterval(checkInterval);
+        resolveContainerReady();
+      }
     }, 1000);
     await containerReady;
 
-    const info = await backend.getContainerInfo({
-      key: "ws-test",
-      kind: "workspace",
-      workspaceFolder: cwd,
-    });
+    const info = backend.getContainerInfo("ws-test");
     expect(info).not.toBeNull();
     expect(info?.backend).toBe("devcontainer");
     expect(info?.image).toBeDefined();
@@ -1445,7 +1474,9 @@ dockerTest(
 
     const session = createContainerTestSession({
       backend,
-      workspaces: [makeWorkspace({ cwd, containerBackend: "devcontainer" })],
+      workspaces: [
+        makeWorkspace({ workspaceId: "ws-full-flow", cwd, containerBackend: "devcontainer" }),
+      ],
       emitted,
     });
 
@@ -1459,36 +1490,34 @@ dockerTest(
       };
     }>(session);
 
-    const workspace = makeWorkspace({ cwd, containerBackend: "devcontainer" });
+    const workspace = makeWorkspace({
+      workspaceId: "ws-full-flow",
+      cwd,
+      containerBackend: "devcontainer",
+    });
     const descriptor = await internals.describeWorkspaceRecord(workspace);
 
     // containerStatus should be "starting" (pending activation registered synchronously)
     expect(descriptor.containerStatus).toBe("starting");
 
-    // Wait for the container to start in the background
+    // Wait for the background start to finish. Poll the registry rather than
+    // the container runtime: `docker ps` sees the container before `up` returns
+    // and the strategy is activated.
     const { promise: containerReady, resolve: resolveContainerReady } =
       Promise.withResolvers<void>();
     const checkInterval = setInterval(() => {
-      backend
-        .isAlreadyRunning({ key: "ws-test", kind: "workspace", workspaceFolder: cwd })
-        .then((running) => {
-          if (running) {
-            clearInterval(checkInterval);
-            resolveContainerReady();
-          }
-          return undefined;
-        });
-    }, 1000);
+      if (internals.launchStrategyRegistry.hasContainerStrategy("ws-full-flow")) {
+        clearInterval(checkInterval);
+        resolveContainerReady();
+      }
+    }, 500);
     await containerReady;
 
-    // The launch strategy registry should now have an isolated strategy
-    expect(internals.launchStrategyRegistry.hasContainerStrategy("ws-test")).toBe(true);
-
-    const strategy = await internals.launchStrategyRegistry.awaitStrategy("ws-test");
+    const strategy = await internals.launchStrategyRegistry.awaitStrategy("ws-full-flow");
     expect(strategy.isIsolated).toBe(true);
 
     await backend
-      .stop({ key: "ws-test", kind: "workspace", workspaceFolder: cwd }, { remove: true })
+      .stop({ key: "ws-full-flow", kind: "workspace", workspaceFolder: cwd }, { remove: true })
       .catch(() => {});
   },
   120_000,

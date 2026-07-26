@@ -26,7 +26,7 @@ paseo.container           = <workspaceId | probe:<uuid>>
 paseo.owner               = workspace | probe
 ```
 
-`--id-label` **replaces** the labels the CLI infers from the workspace folder, so the folder ones are re-supplied verbatim — other devcontainer tooling still recognises the container, and label filters are subset matches. The Paseo labels are what adoption queries on (`docker ps --filter label=paseo.container=<key>`), which is what makes the following true:
+`--id-label` **replaces** the labels the CLI infers from the workspace folder, so the folder ones are re-supplied verbatim — other devcontainer tooling still recognises the container, and label filters are subset matches. The Paseo labels are what adoption queries on (`docker ps --filter label=paseo.container=<key> --filter label=devcontainer.local_folder=<folder>`), which is what makes the following true:
 
 - Two workspaces on the same directory get two containers instead of silently sharing one.
 - A probe cannot adopt — or stop — a workspace's container, even for the same directory. Before this, probing a directory that already had a running workspace container would `docker stop` it out from under the running agents.
@@ -111,12 +111,13 @@ Probe containers are deliberately **not** adopted by the workspace that gets cre
 
 ## Lifecycle
 
-- Containers **outlive the daemon**. On restart, `isAlreadyRunning` finds one by the `devcontainer.local_folder` label and adopts it instead of rebuilding — same as VS Code's behavior.
+- Containers **outlive the daemon**. On restart, `isAlreadyRunning` finds one by its `paseo.container` + `devcontainer.local_folder` labels and adopts it instead of rebuilding — same as VS Code's behavior. Both labels are matched: the key alone would also find a container created for that key against a different folder.
 - `up()` re-inspects a cached handle before reusing it, because containers get stopped or rebuilt from outside Paseo.
 - **Archiving a workspace stops its container**, as does switching the workspace off that backend. Unarchiving starts it again.
 - Availability (`devcontainer` + `docker` on PATH) is cached for 60s. Docker is routinely started after the daemon, so a negative answer must not stick for the process lifetime.
 - Probe containers are removed when their probe ends, and any that survive a daemon crash are reaped at the next startup (`removeAbandonedProbeContainers`).
 - `devcontainer.json` is watched; a hash change emits `container.config_changed` so the client can offer a rebuild.
+- **Container details for the UI are captured when the container starts**, not queried per read. The workspace badge and the sidebar's container icon show backend, image, container name, user and start time, and a workspace descriptor is rebuilt on every workspace update — so a descriptor that queried the runtime, or that emitted an update once its answer arrived, would loop and burn a `docker inspect` per cycle. `getContainerInfo(key)` is a synchronous read of what `up` recorded.
 
 ## Testing
 

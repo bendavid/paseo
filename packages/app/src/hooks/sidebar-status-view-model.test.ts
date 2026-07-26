@@ -33,6 +33,7 @@ function ws(
     scripts: [],
     hasRunningScripts: false,
     containerStatus: undefined,
+    containerInfo: undefined,
     workspaceKey: input.workspaceKey,
   };
 }

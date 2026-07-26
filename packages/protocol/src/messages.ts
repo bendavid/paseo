@@ -3294,6 +3294,9 @@ export const WorkspaceDescriptorPayloadSchema = z
     containerInfo: z
       .object({
         backend: z.string(),
+        // COMPAT(devContainers): added in v0.2.0, remove gate after 2027-07-22.
+        // Absent on older daemons; clients fall back to the backend id.
+        backendLabel: z.string().optional(),
         containerId: z.string(),
         containerName: z.string(),
         image: z.string(),

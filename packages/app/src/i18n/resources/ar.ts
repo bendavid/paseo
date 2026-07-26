@@ -586,18 +586,24 @@ export const ar: TranslationResources = {
       },
       container: {
         running: "يعمل في حاوية",
-        runningTooltip: "تعمل الوكلاء والمحطات الطرفية و git داخل بيئة حاوية معزولة",
+        runningTooltip: "تعمل الوكلاء والطرفيات داخل حاوية مساحة العمل هذه",
         starting: "بدء الحاوية",
         startingTooltip:
           "جاري بناء وبدء بيئة الحاوية. سينتظر الوكلاء والمحطات الطرفية حتى تكون جاهزة.",
         stopped: "توقفت الحاوية",
         stoppedTooltip: "بيئة الحاوية لم تعد تعمل",
+        details: {
+          backend: "الخلفية",
+          image: "الصورة",
+          container: "الحاوية",
+          user: "المستخدم",
+          started: "بدأ",
+        },
         configChangedTitle: "تم تغيير إعدادات الحاوية",
         configChangedMessage:
           "تم تغيير devcontainer.json منذ بناء الحاوية. أعد البناء لتطبيق التغييرات.",
-        rebuild: "إعادة بناء الحاوية",
         dismiss: "تجاهل",
-        rebuildAction: "إعادة البناء",
+        rebuildAction: "إعادة بناء الحاوية",
         restartAction: "إعادة تشغيل الحاوية",
         rebuildConfirmTitle: "إعادة بناء الحاوية",
         rebuildConfirmMessage:

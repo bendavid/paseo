@@ -591,18 +591,24 @@ export const ru: TranslationResources = {
       },
       container: {
         running: "Запуск в контейнере",
-        runningTooltip: "Агенты, терминалы и git работают в изолированной контейнерной среде",
+        runningTooltip: "Агенты и терминалы выполняются в контейнере этого рабочего пространства",
         starting: "Запуск контейнера",
         startingTooltip:
           "Сборка и запуск контейнерной среды. Агенты и терминалы будут ждать готовности.",
         stopped: "Контейнер остановлен",
         stoppedTooltip: "Контейнерная среда больше не запущена",
+        details: {
+          backend: "Бэкенд",
+          image: "Образ",
+          container: "Контейнер",
+          user: "Пользователь",
+          started: "Запущен",
+        },
         configChangedTitle: "Конфигурация контейнера изменена",
         configChangedMessage:
           "devcontainer.json изменился с момента сборки контейнера. Пересоберите, чтобы применить изменения.",
-        rebuild: "Пересобрать контейнер",
         dismiss: "Отклонить",
-        rebuildAction: "Пересобрать",
+        rebuildAction: "Пересобрать контейнер",
         restartAction: "Перезапустить контейнер",
         rebuildConfirmTitle: "Пересобрать контейнер",
         rebuildConfirmMessage:

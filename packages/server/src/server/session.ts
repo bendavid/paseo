@@ -4405,33 +4405,22 @@ export class Session {
       ...resolveContainerStatus(this.launchStrategyRegistry, workspace),
       hasDevContainerConfig:
         this.containerBackends?.list().some((b) => b.hasConfig(workspace.cwd)) ?? false,
-      // containerInfo is fetched async and emitted as a follow-up workspace
-      // update, so a slow docker inspect doesn't block the descriptor.
-      containerInfo: undefined,
+      containerInfo: this.resolveContainerInfo(workspace),
     };
-    // Fire-and-forget: fetch container info and emit an update if available.
-    void this.resolveContainerInfo(workspace).then((info) => {
-      if (info) {
-        void this.emitWorkspaceUpdateForWorkspaceId(workspace.workspaceId);
-      }
-      return undefined;
-    });
     return descriptor;
   }
 
-  private async resolveContainerInfo(
+  /**
+   * Container details for the workspace badge. Read from the backend's
+   * in-memory record, never queried here: this runs on every descriptor build,
+   * and a descriptor build is what a workspace update produces.
+   */
+  private resolveContainerInfo(
     workspace: PersistedWorkspaceRecord,
-  ): Promise<WorkspaceDescriptorPayload["containerInfo"]> {
+  ): WorkspaceDescriptorPayload["containerInfo"] {
     const backend = this.containerBackends?.get(workspace.containerBackend) ?? null;
     if (!backend) return undefined;
-    // Only query container info when the strategy is active or pending —
-    // avoids a docker inspect call for every workspace descriptor build.
-    const registry = this.launchStrategyRegistry;
-    const key = workspace.workspaceId;
-    if (!registry?.hasContainerStrategy(key) && !registry?.isPendingActivation(key)) {
-      return undefined;
-    }
-    return backend.getContainerInfo({ key, kind: "workspace", workspaceFolder: workspace.cwd });
+    return backend.getContainerInfo(workspace.workspaceId) ?? undefined;
   }
 
   /**

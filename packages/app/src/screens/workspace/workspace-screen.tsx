@@ -71,6 +71,7 @@ import { WorkspaceOpenInEditorButton } from "@/screens/workspace/workspace-open-
 import { WorkspaceScriptsButton } from "@/screens/workspace/workspace-scripts-button";
 import { ImportSessionSheet } from "@/components/import-session-sheet";
 import { ContainerConfigChangedBanner } from "@/components/container-config-changed-banner";
+import { ContainerStatusTooltipBody } from "@/components/container-status-tooltip";
 import { useToast } from "@/contexts/toast-context";
 import { selectIsFileExplorerOpen, usePanelStore } from "@/stores/panel-store";
 import { type ExplorerCheckoutContext } from "@/stores/explorer-checkout-context";
@@ -1325,34 +1326,11 @@ function WorkspaceHeaderTitleBar({
                   </Text>
                 </View>
               </TooltipTrigger>
-              <TooltipContent side="bottom" align="center" offset={4} maxWidth={280}>
-                {containerInfo ? (
-                  <View style={styles.containerTooltipContent}>
-                    <Text style={styles.containerTooltipTitle}>
-                      {t("workspace.header.container.running")}
-                    </Text>
-                    <View style={styles.containerTooltipGrid}>
-                      <Text style={styles.containerTooltipLabel}>Backend</Text>
-                      <Text style={styles.containerTooltipValue}>{containerInfo.backend}</Text>
-                      <Text style={styles.containerTooltipLabel}>Image</Text>
-                      <Text style={styles.containerTooltipValue}>{containerInfo.image}</Text>
-                      <Text style={styles.containerTooltipLabel}>Container</Text>
-                      <Text style={styles.containerTooltipValue}>
-                        {containerInfo.containerName}
-                      </Text>
-                      <Text style={styles.containerTooltipLabel}>User</Text>
-                      <Text style={styles.containerTooltipValue}>{containerInfo.remoteUser}</Text>
-                      <Text style={styles.containerTooltipLabel}>Started</Text>
-                      <Text style={styles.containerTooltipValue}>
-                        {new Date(containerInfo.startedAt).toLocaleString()}
-                      </Text>
-                    </View>
-                  </View>
-                ) : (
-                  <Text style={styles.containerTooltipText}>
-                    {t(`workspace.header.container.${containerStatus}Tooltip`)}
-                  </Text>
-                )}
+              <TooltipContent side="bottom" align="center" offset={4} maxWidth={320}>
+                <ContainerStatusTooltipBody
+                  containerStatus={containerStatus}
+                  containerInfo={containerInfo}
+                />
               </TooltipContent>
             </Tooltip>
           ) : null}
@@ -4097,30 +4075,6 @@ const styles = StyleSheet.create((theme) => ({
   containerBadgeText: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
-  },
-  containerTooltipText: {
-    fontSize: theme.fontSize.sm,
-    color: theme.colors.popoverForeground,
-  },
-  containerTooltipContent: {
-    gap: theme.spacing[2],
-  },
-  containerTooltipTitle: {
-    fontSize: theme.fontSize.sm,
-    fontWeight: "600",
-    color: theme.colors.popoverForeground,
-  },
-  containerTooltipGrid: {
-    gap: theme.spacing[1],
-  },
-  containerTooltipLabel: {
-    fontSize: theme.fontSize.xs,
-    color: theme.colors.foregroundMuted,
-    fontWeight: "500",
-  },
-  containerTooltipValue: {
-    fontSize: theme.fontSize.xs,
-    color: theme.colors.popoverForeground,
   },
   headerTitleSkeleton: {
     width: 220,

@@ -36,6 +36,7 @@ function workspace(projectKey: string, workspaceId: string): SidebarWorkspaceEnt
     scripts: [],
     hasRunningScripts: false,
     containerStatus: undefined,
+    containerInfo: undefined,
   };
 }
 

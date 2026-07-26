@@ -83,6 +83,9 @@ export function createDevContainerBackend(
   // or a synthetic probe key). The workspaceFolder is still used for CLI
   // args and config discovery, but is no longer the map key.
   const handles = new Map<string, ExecutionHandle>();
+  // Captured at start time. Workspace descriptors are rebuilt on every workspace
+  // update, so the UI's container details cannot be a per-build docker query.
+  const containerInfoByKey = new Map<string, ContainerInfo>();
   let availabilityCache: { available: boolean; checkedAt: number } | null = null;
 
   async function isAvailable(): Promise<boolean> {
@@ -136,7 +139,15 @@ export function createDevContainerBackend(
    * return a container belonging to another workspace or to a probe.
    */
   async function findRunningContainerId(ref: ContainerRef): Promise<string | null> {
-    return findContainerId([`label=${CONTAINER_KEY_LABEL}=${ref.key}`], { includeStopped: false });
+    // Both halves of the identity we stamp on: the key alone would also match a
+    // container created for the same key against a different folder.
+    return findContainerId(
+      [
+        `label=${CONTAINER_KEY_LABEL}=${ref.key}`,
+        `label=${LOCAL_FOLDER_LABEL}=${resolve(ref.workspaceFolder)}`,
+      ],
+      { includeStopped: false },
+    );
   }
 
   async function findContainerId(
@@ -251,7 +262,8 @@ export function createDevContainerBackend(
       );
     }
 
-    const gateway = resolveHostGateway(await inspectContainer(parsed.containerId));
+    const inspected = await inspectContainer(parsed.containerId);
+    const gateway = resolveHostGateway(inspected);
     const handle: ExecutionHandle = {
       identifier: parsed.containerId,
       remoteUser: parsed.remoteUser,
@@ -260,6 +272,7 @@ export function createDevContainerBackend(
     };
 
     handles.set(options.key, handle);
+    containerInfoByKey.set(options.key, buildContainerInfo(handle, inspected));
     logger.info(
       { workspaceFolder, identifier: handle.identifier, remoteUser: handle.remoteUser },
       "Dev container started",
@@ -352,9 +365,13 @@ export function createDevContainerBackend(
 
   /** Delete the container for a key, running or not. */
   async function removeContainer(ref: ContainerRef): Promise<void> {
-    const identifiers = await listContainerIds([`label=${CONTAINER_KEY_LABEL}=${ref.key}`], {
-      includeStopped: true,
-    });
+    const identifiers = await listContainerIds(
+      [
+        `label=${CONTAINER_KEY_LABEL}=${ref.key}`,
+        `label=${LOCAL_FOLDER_LABEL}=${resolve(ref.workspaceFolder)}`,
+      ],
+      { includeStopped: true },
+    );
     for (const identifier of identifiers) {
       try {
         await execCommand(dockerBin, ["rm", "-f", identifier], {
@@ -388,7 +405,9 @@ export function createDevContainerBackend(
         // A handle that outlives its container would report a running
         // environment and send execs into nothing.
         for (const [key, handle] of handles) {
-          if (handle.identifier === identifier) handles.delete(key);
+          if (handle.identifier !== identifier) continue;
+          handles.delete(key);
+          containerInfoByKey.delete(key);
         }
       } catch (error) {
         logger.warn({ err: error, identifier }, "Failed to remove abandoned probe container");
@@ -436,22 +455,8 @@ export function createDevContainerBackend(
     return (await findRunningContainerId(ref)) !== null;
   }
 
-  async function getContainerInfo(ref: ContainerRef): Promise<ContainerInfo | null> {
-    const handle = handles.get(ref.key);
-    // Without a handle the container may still be running from a previous
-    // daemon session — the label is the runtime's own record of it.
-    const identifier = handle?.identifier ?? (await findRunningContainerId(ref));
-    if (!identifier) return null;
-    const data = await inspectContainer(identifier);
-    if (!data) return null;
-    return {
-      backend: "devcontainer",
-      containerId: identifier.slice(0, 12),
-      containerName: data.Name?.replace(/^\//, "") ?? identifier.slice(0, 12),
-      image: data.Config?.Image ?? "unknown",
-      startedAt: data.State?.StartedAt ?? new Date().toISOString(),
-      remoteUser: data.Config?.User || handle?.remoteUser || "root",
-    };
+  function getContainerInfo(key: string): ContainerInfo | null {
+    return containerInfoByKey.get(key) ?? null;
   }
 
   /**
@@ -476,8 +481,8 @@ export function createDevContainerBackend(
     });
 
   return {
-    id: "devcontainer",
-    label: "Dev Container",
+    id: DEVCONTAINER_BACKEND_ID,
+    label: DEVCONTAINER_BACKEND_LABEL,
     isAvailable,
     hasConfig,
     up,
@@ -490,6 +495,25 @@ export function createDevContainerBackend(
     isAlreadyRunning,
     removeAbandonedProbeContainers,
     createStrategy,
+  };
+}
+
+const DEVCONTAINER_BACKEND_ID = "devcontainer";
+const DEVCONTAINER_BACKEND_LABEL = "Dev Container";
+
+/** What the UI shows about a running container, from the CLI result + inspect. */
+function buildContainerInfo(
+  handle: ExecutionHandle,
+  inspected: DockerInspectResult | null,
+): ContainerInfo {
+  return {
+    backend: DEVCONTAINER_BACKEND_ID,
+    backendLabel: DEVCONTAINER_BACKEND_LABEL,
+    containerId: handle.identifier.slice(0, 12),
+    containerName: inspected?.Name?.replace(/^\//, "") ?? handle.identifier.slice(0, 12),
+    image: inspected?.Config?.Image ?? "unknown",
+    startedAt: inspected?.State?.StartedAt ?? new Date().toISOString(),
+    remoteUser: inspected?.Config?.User || handle.remoteUser || "root",
   };
 }
 

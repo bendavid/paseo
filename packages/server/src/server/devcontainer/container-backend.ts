@@ -48,6 +48,8 @@ export interface ExecutionHandle {
 export interface ContainerInfo {
   /** Backend that manages this container (e.g. "devcontainer") */
   backend: string;
+  /** Human-readable backend name (e.g. "Dev Container") */
+  backendLabel: string;
   /** Container ID (short form for display) */
   containerId: string;
   /** Container name (e.g. "frosty_blackburn") */
@@ -123,10 +125,12 @@ export interface ContainerBackend {
   getHandle(key: string): ExecutionHandle | null;
 
   /**
-   * Get metadata about the running container for display in the UI.
-   * Returns null if no container is running or the info can't be retrieved.
+   * Metadata about the running container, for display in the UI. Captured when
+   * the container starts and served from memory: a workspace descriptor is
+   * rebuilt on every workspace update, so this cannot cost a runtime query.
+   * Null when this key has no running container.
    */
-  getContainerInfo(ref: ContainerRef): Promise<ContainerInfo | null>;
+  getContainerInfo(key: string): ContainerInfo | null;
 
   /**
    * Restart the environment for a workspace — stop the running container and

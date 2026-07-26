@@ -42,6 +42,7 @@ function workspace(input: {
     scripts: [],
     hasRunningScripts: false,
     containerStatus: undefined,
+    containerInfo: undefined,
   };
 }
 
