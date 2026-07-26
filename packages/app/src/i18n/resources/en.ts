@@ -1289,8 +1289,6 @@ export const en = {
       label: "Execution environment",
       host: "Host",
       devcontainer: "Dev Container",
-      dockerUnavailable: "Docker is not available",
-      noDevContainerConfig: "No devcontainer.json found in this directory",
       probing: "{{backend}} — starting…",
       probeFailed: "Could not inspect the container: {{error}}",
     },

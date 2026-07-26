@@ -49,7 +49,10 @@ import {
   useHosts,
   type HostRuntimeConnectionStatus,
 } from "@/runtime/host-runtime";
-import { useContainerBackendAvailability } from "@/hooks/use-container-backend-availability";
+import {
+  selectableContainerBackends,
+  useContainerBackendAvailability,
+} from "@/hooks/use-container-backend-availability";
 import { useHostFeature, useHostFeatureMap } from "@/runtime/host-features";
 import type { HostProfile } from "@/types/host-connection";
 import {
@@ -2023,12 +2026,9 @@ export function NewWorkspaceScreen({
   // Host is always available. Each available backend that hasConfig is shown.
   const containerBackendOptions = useMemo<ComboboxOptionType[]>(() => {
     const hostOption = { id: "host", label: containerBackendLabel(t, null) };
-    const selectableBackends = (containerAvailability?.backends ?? []).filter(
-      (b) => b.available && b.hasConfig,
-    );
     return [
       hostOption,
-      ...selectableBackends.map((backend) => ({
+      ...selectableContainerBackends(containerAvailability).map((backend) => ({
         id: backend.id,
         label: backend.label,
       })),
@@ -2334,7 +2334,8 @@ export function NewWorkspaceScreen({
       openState: containerBackendPickerOpen,
       onOpenChange: handleContainerBackendPickerOpenChange,
       renderOption: renderContainerBackendOption,
-      canShow: containerAvailability !== null,
+      // Host on its own is not a choice, so there is nothing to pick.
+      canShow: containerBackendOptions.length > 1,
       probeStatus: containerProbe.status,
     },
     base: {

@@ -1323,8 +1323,6 @@ export const fr: TranslationResources = {
       label: "Environnement d'exécution",
       host: "Hôte",
       devcontainer: "Conteneur de développement",
-      dockerUnavailable: "Docker n'est pas disponible",
-      noDevContainerConfig: "Aucun devcontainer.json trouvé dans ce répertoire",
       probing: "{{backend}} — démarrage…",
       probeFailed: "Impossible d'inspecter le conteneur : {{error}}",
     },

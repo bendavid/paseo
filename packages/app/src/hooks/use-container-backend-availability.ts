@@ -14,6 +14,17 @@ export interface ContainerAvailability {
   backends: AvailableBackendInfo[];
 }
 
+/**
+ * The backends a user can actually pick for a directory: installed on the host
+ * and configured for that directory. Host is always available on top of these,
+ * so an empty result means there is no choice to offer.
+ */
+export function selectableContainerBackends(
+  availability: ContainerAvailability | null,
+): AvailableBackendInfo[] {
+  return (availability?.backends ?? []).filter((backend) => backend.available && backend.hasConfig);
+}
+
 export function useContainerBackendAvailability(
   client: DaemonClient | null,
   sourceDirectory: string,
@@ -38,12 +49,19 @@ export function useContainerBackendAvailability(
       .checkContainerAvailability(sourceDirectory)
       .then((result) => {
         if (cancelled) return;
-        setContainerAvailability({
-          backends: result.backends,
-        });
+        const availability = { backends: result.backends };
+        setContainerAvailability(availability);
         // Default to Host (null). The user must explicitly pick a container
         // backend from the dropdown; availability is only fetched to populate
         // the dropdown options.
+        //
+        // A backend picked for a previous directory may not be offered for this
+        // one — creating the workspace with it would ask for a container the
+        // directory has no config for.
+        const selectableIds = new Set(
+          selectableContainerBackends(availability).map((backend) => backend.id),
+        );
+        setContainerBackend((current) => (current && !selectableIds.has(current) ? null : current));
         return undefined;
       })
       .catch((error) => {

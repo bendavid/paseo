@@ -1320,8 +1320,6 @@ export const es: TranslationResources = {
       label: "Entorno de ejecución",
       host: "Host",
       devcontainer: "Contenedor de desarrollo",
-      dockerUnavailable: "Docker no está disponible",
-      noDevContainerConfig: "No se encontró devcontainer.json en este directorio",
       probing: "{{backend}} — iniciando…",
       probeFailed: "No se pudo inspeccionar el contenedor: {{error}}",
     },
