@@ -2300,9 +2300,24 @@ export function NewWorkspaceScreen({
         ? {
             ...composerState.agentControls,
             disabled: isPending,
+            // Retry has to ask whichever environment is selected. The form's
+            // own refresh is cwd-scoped, so with a container picked it answers
+            // about the host — or about whatever workspace already owns this
+            // directory — and replaces the container's models with those.
+            // The container answers for every provider at once, so the
+            // provider argument has nothing to narrow.
+            onRetryModelProvider: containerProbe.retry,
+            isRetryingModelProvider:
+              containerProbe.isRetrying || containerProbe.status === "probing",
           }
         : undefined,
-    [composerState, isPending],
+    [
+      composerState,
+      isPending,
+      containerProbe.retry,
+      containerProbe.isRetrying,
+      containerProbe.status,
+    ],
   );
 
   const pickerEmptyText =
