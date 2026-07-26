@@ -830,21 +830,30 @@ async function createPtyProcess(input: CreatePtyProcessInput) {
   const { command: resolvedCmd, args: resolvedArgs } = command
     ? await resolveTerminalSpawnCommand(command, args)
     : { command: resolvedShell, args: [] as string[] };
+  const terminalEnv = {
+    ...env,
+    ...activityEnv,
+    PASEO_WORKSPACE_ID: workspaceId,
+  };
+  // An isolated terminal's pty runs the exec binary on the host, so the
+  // terminal's own variables have to travel as exec env flags — anything set
+  // on the pty process itself stops at the container boundary.
   const { command: spawnCommand, args: spawnArgs } = launchStrategy
-    ? launchStrategy.wrapCommand(resolvedCmd, resolvedArgs, { cwd })
+    ? launchStrategy.wrapCommand(resolvedCmd, resolvedArgs, {
+        cwd,
+        env: terminalEnv,
+        interactive: true,
+      })
     : { command: resolvedCmd, args: resolvedArgs };
   return pty.spawn(spawnCommand, spawnArgs, {
     name: "xterm-256color",
     cols,
     rows,
-    cwd: launchStrategy?.isIsolated ? launchStrategy.resolveCwd(cwd) : cwd,
+    // The exec binary itself is a host process, so it needs a host cwd.
+    cwd,
     env: buildTerminalEnvironment({
       shell: spawnCommand,
-      env: {
-        ...env,
-        ...activityEnv,
-        PASEO_WORKSPACE_ID: workspaceId,
-      },
+      env: terminalEnv,
     }),
   });
 }
@@ -863,7 +872,10 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     command,
     args = [],
   } = options;
-  const resolvedShell = shell ?? resolveDefaultTerminalShell();
+  // A container answers with its own user's shell; the host's $SHELL is a host
+  // path that usually doesn't exist in the image.
+  const resolvedShell =
+    shell ?? (await options.launchStrategy?.resolveDefaultShell()) ?? resolveDefaultTerminalShell();
 
   const id = options.id ?? randomUUID();
   const listeners = new Set<(msg: ServerMessage) => void>();

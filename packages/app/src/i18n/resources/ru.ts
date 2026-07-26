@@ -1312,6 +1312,8 @@ export const ru: TranslationResources = {
       devcontainer: "Контейнер разработки",
       dockerUnavailable: "Docker недоступен",
       noDevContainerConfig: "В этом каталоге не найден devcontainer.json",
+      probing: "{{backend}} — запуск…",
+      probeFailed: "Не удалось проверить контейнер: {{error}}",
     },
   },
   onboarding: {

@@ -20,12 +20,14 @@ export function ContainerBackendSelector({
   const { t } = useTranslation();
 
   const hint = useMemo(() => {
-    const unavailableBackend = backends.find((b) => !b.available);
-    if (unavailableBackend) {
+    if (backends.length === 0) return undefined;
+    // Explain why the list is Host-only, not merely that some backend among
+    // several is unusable.
+    const usable = backends.filter((b) => b.available);
+    if (usable.length === 0) {
       return t("workspaceSetup.containerBackend.dockerUnavailable");
     }
-    const noConfigBackend = backends.find((b) => !b.hasConfig);
-    if (noConfigBackend) {
+    if (!usable.some((b) => b.hasConfig)) {
       return t("workspaceSetup.containerBackend.noDevContainerConfig");
     }
     return undefined;

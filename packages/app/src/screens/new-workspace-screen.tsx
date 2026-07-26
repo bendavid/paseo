@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { ReactElement, RefObject } from "react";
-import { useQueryClient } from "@tanstack/react-query";
-import { refreshAndApplyProvidersSnapshot } from "@/hooks/use-providers-snapshot";
+import {
+  useContainerProviderProbe,
+  type ContainerProbeStatus,
+} from "@/hooks/use-container-provider-probe";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { Pressable, StyleSheet as RNStyleSheet, Text, View } from "react-native";
@@ -1422,6 +1424,7 @@ interface NewWorkspaceFormStackInput {
     canCreateWorktree: boolean;
   };
   containerBackend: FormPickerControl & {
+    probeStatus: ContainerProbeStatus;
     value: string | null;
     options: ComboboxOptionType[];
     onSelect: (id: string) => void;
@@ -1451,7 +1454,12 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
     host.allHosts.find((h) => h.serverId === host.selectedServerId)?.label ?? "Host";
   const showHostControl = host.allHosts.length > 1;
   const isolationTriggerLabel = isolationLabel(t, isolation.effectiveIsolation);
-  const containerBackendTriggerLabel = containerBackendLabel(t, containerBackend.value);
+  const containerBackendBaseLabel = containerBackendLabel(t, containerBackend.value);
+  // Building a container takes minutes on a first run; the badge has to say so.
+  const containerBackendTriggerLabel =
+    containerBackend.probeStatus === "probing"
+      ? t("workspaceSetup.containerBackend.probing", { backend: containerBackendBaseLabel })
+      : containerBackendBaseLabel;
   const addProjectAction = useMemo(
     () => <AddProjectPickerAction onPress={project.onAddProject} />,
     [project.onAddProject],
@@ -1720,31 +1728,25 @@ export function NewWorkspaceScreen({
   });
   const { containerBackend, setContainerBackend, containerAvailability } =
     useContainerBackendAvailability(client, selectedSourceDirectory ?? "");
-  const queryClient = useQueryClient();
-  // When the container backend changes, refresh the provider snapshot so model
-  // selection re-probes with the correct backend. For a container backend, first
-  // run a probe (starts a temporary container, refreshes the snapshot server-side,
-  // then stops the container); for Host (null), skip the probe. Either way, refetch
-  // the snapshot afterwards so the UI reflects the probed models.
+  // Model selection must show what the workspace will actually run: the host's
+  // providers, or the container's once a backend is picked.
+  const containerProbe = useContainerProviderProbe({
+    client,
+    serverId: selectedServerId,
+    cwd: selectedSourceDirectory ?? null,
+    containerBackend,
+  });
+  const reportedProbeErrorRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!client || !selectedSourceDirectory) return;
-    void (async () => {
-      if (containerBackend) {
-        try {
-          await client.probeContainer(selectedSourceDirectory, containerBackend);
-        } catch {
-          // Probe failed — the error surfaces in the refreshed snapshot.
-        }
-      }
-      await refreshAndApplyProvidersSnapshot({
-        client,
-        queryClient,
-        serverId: selectedServerId,
-        cwd: selectedSourceDirectory,
-        containerBackend,
-      });
-    })();
-  }, [client, queryClient, selectedServerId, selectedSourceDirectory, containerBackend]);
+    if (containerProbe.status !== "error" || !containerProbe.error) {
+      reportedProbeErrorRef.current = null;
+      return;
+    }
+    // The model list silently stays on the host's providers otherwise.
+    if (reportedProbeErrorRef.current === containerProbe.error) return;
+    reportedProbeErrorRef.current = containerProbe.error;
+    toast.error(t("workspaceSetup.containerBackend.probeFailed", { error: containerProbe.error }));
+  }, [containerProbe.status, containerProbe.error, toast, t]);
   const projectIconTargets = useMemo(
     () =>
       projects.flatMap((project) => {
@@ -2333,6 +2335,7 @@ export function NewWorkspaceScreen({
       onOpenChange: handleContainerBackendPickerOpenChange,
       renderOption: renderContainerBackendOption,
       canShow: containerAvailability !== null,
+      probeStatus: containerProbe.status,
     },
     base: {
       anchorRef: pickerAnchorRef,

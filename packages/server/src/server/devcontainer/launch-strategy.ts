@@ -1,7 +1,8 @@
 import { type ChildProcess, type SpawnOptions, spawn } from "node:child_process";
+import { once } from "node:events";
 import { resolve } from "node:path";
 import type { ProcessEnvRecord } from "../paseo-env.js";
-import type { ExecutionHandle } from "./container-backend.js";
+import { spawnProcess } from "../../utils/spawn.js";
 
 /**
  * ProcessLaunchStrategy — the central abstraction that determines whether a
@@ -11,20 +12,27 @@ import type { ExecutionHandle } from "./container-backend.js";
  * Resolved per workspace: a workspace with a running environment gets a
  * ContainerExecLaunchStrategy; all others get LocalLaunchStrategy.
  *
- * Three process categories route through this:
+ * Two process categories route through this:
  *   1. Agent processes (ACP and direct providers)
  *   2. Terminal PTY processes (via wrapCommand + pty.spawn)
- *   3. Git commands (runGitCommand)
  *
- * Git lifecycle operations (worktree add/remove) always use local execution
- * because the environment may not exist yet. The strategy transition happens
- * when the environment becomes available.
+ * Git commands deliberately do NOT route through this — see
+ * docs/devcontainers.md ("Git runs on the host").
  */
 
 export interface LaunchSpawnOptions {
   cwd?: string;
+  /**
+   * Base environment for the child. Local launches use it as the child's whole
+   * environment; isolated launches forward only the entries that differ from
+   * the daemon's own environment, because the image owns PATH/HOME/etc.
+   */
+  baseEnv?: ProcessEnvRecord;
+  /** Alias for baseEnv, matching spawnProcess's option shape. */
   env?: ProcessEnvRecord;
+  /** Explicit per-launch overrides. Always forwarded, isolated or not. */
   envOverlay?: ProcessEnvRecord;
+  /** Host-spawn concern only; isolated launches take their base env from the image. */
   envMode?: "external" | "internal";
   shell?: boolean | string;
   stdio?: SpawnOptions["stdio"];
@@ -36,6 +44,18 @@ export interface LaunchSpawnOptions {
 export interface ResolvedCommand {
   command: string;
   args: string[];
+}
+
+export interface WrapCommandOptions {
+  cwd?: string;
+  /**
+   * Environment the wrapped command must observe. Isolated launches translate
+   * this into exec env flags; local launches ignore it because the caller
+   * applies the environment to its own spawn.
+   */
+  env?: ProcessEnvRecord;
+  /** Allocate a TTY. Terminals need this; piped agent processes must not have it. */
+  interactive?: boolean;
 }
 
 export interface ProcessLaunchStrategy {
@@ -50,7 +70,7 @@ export interface ProcessLaunchStrategy {
    * when inside a container. Used by callers that need to spawn via a different
    * mechanism (e.g. node-pty's pty.spawn for terminals).
    */
-  wrapCommand(command: string, args: string[], options?: { cwd?: string }): ResolvedCommand;
+  wrapCommand(command: string, args: string[], options?: WrapCommandOptions): ResolvedCommand;
 
   /**
    * Map a host-side cwd to the execution context's cwd.
@@ -58,6 +78,28 @@ export interface ProcessLaunchStrategy {
    * For container execution, returns the environment's workspace folder.
    */
   resolveCwd(hostCwd: string): string;
+
+  /**
+   * Rewrite a daemon-local URL (the agent MCP endpoint, the terminal activity
+   * endpoint) into one the launched process can reach. Returns null when the
+   * daemon is unreachable from the execution environment, so callers can drop
+   * the feature instead of handing out an address that silently times out.
+   */
+  resolveDaemonUrl(url: string): string | null;
+
+  /**
+   * The interactive shell a terminal should launch, or null when the caller's
+   * own default applies. Local execution returns null. Container execution
+   * returns the user's login shell inside the environment, because the host's
+   * `$SHELL` (`/opt/homebrew/bin/fish`, say) usually isn't in the image.
+   */
+  resolveDefaultShell(): Promise<string | null>;
+
+  /**
+   * Serializable description of the execution environment, or null for local
+   * execution. Strategy objects cannot cross a worker boundary; this can.
+   */
+  serialize(): ContainerExecSpec | null;
 
   readonly isIsolated: boolean;
 }
@@ -69,10 +111,7 @@ export class LocalLaunchStrategy implements ProcessLaunchStrategy {
   readonly isIsolated = false;
 
   spawn(command: string, args: string[], options?: LaunchSpawnOptions): ChildProcess {
-    // Defer import to avoid circular module loading at module-eval time.
-    const { spawnProcess } =
-      require("../../utils/spawn.js") as typeof import("../../utils/spawn.js");
-    return spawnProcess(command, args, options as Parameters<typeof spawnProcess>[2]);
+    return spawnProcess(command, args, options);
   }
 
   wrapCommand(command: string, args: string[]): ResolvedCommand {
@@ -82,108 +121,290 @@ export class LocalLaunchStrategy implements ProcessLaunchStrategy {
   resolveCwd(hostCwd: string): string {
     return hostCwd;
   }
+
+  resolveDaemonUrl(url: string): string {
+    return url;
+  }
+
+  async resolveDefaultShell(): Promise<null> {
+    // The host terminal already knows its own default shell.
+    return null;
+  }
+
+  serialize(): null {
+    return null;
+  }
+}
+
+/**
+ * Serializable description of how to exec into a running environment.
+ *
+ * The final argv is assembled as:
+ *   command, ...leadingArgs, ...optionArgs, <workdir/env/tty flags>, ...targetArgs, cmd, ...args
+ *
+ * Splitting options from the target this way keeps the assembly free of
+ * positional guesswork: `docker exec` takes all its flags before the container
+ * ID and treats everything after it as the command, while `kubectl exec` needs
+ * a trailing `--` in targetArgs.
+ */
+export interface ContainerExecSpec {
+  /** Binary that execs into the environment ("docker", "podman", "kubectl"). */
+  command: string;
+  /** Args before the option section (e.g. ["exec"]). */
+  leadingArgs: string[];
+  /** Options applied to every exec (e.g. ["-i", "-u", "node"]). */
+  optionArgs: string[];
+  /** The target and anything that must follow it (e.g. ["<id>"] or ["<pod>", "--"]). */
+  targetArgs: string[];
+  /** Flag that sets the working directory ("-w"), or null when unsupported. */
+  workdirFlag: string | null;
+  /** Flag that sets an environment variable ("-e"), or null when unsupported. */
+  envFlag: string | null;
+  /** Extra options for interactive (PTY) launches, e.g. ["-t"]. */
+  ttyArgs: string[];
+  /** Host-side workspace folder — the bind-mount source. */
+  hostWorkspaceFolder: string;
+  /** Workspace folder path inside the environment. */
+  remoteWorkspaceFolder: string;
+  /**
+   * Address that routes back to the host from inside the environment (the
+   * container's default gateway). Absent when it could not be determined.
+   */
+  hostGatewayAddress?: string;
+}
+
+/**
+ * Environment variables the host owns and the image defines for itself.
+ * Forwarding these would break command resolution and file layout inside the
+ * environment, so they are dropped from the inherited base environment.
+ * Explicit overlays still win — those are deliberate per-launch choices.
+ */
+const HOST_OWNED_ENV_KEYS = new Set([
+  "PATH",
+  "Path",
+  "HOME",
+  "SHELL",
+  "USER",
+  "LOGNAME",
+  "PWD",
+  "OLDPWD",
+  "TMPDIR",
+  "TEMP",
+  "TMP",
+  "HOSTNAME",
+]);
+
+const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
+
+/**
+ * Asks the environment which shell the user has: `$SHELL` when the image sets
+ * one, otherwise the login shell from the user's passwd entry.
+ */
+const DEFAULT_SHELL_PROBE_SCRIPT =
+  'printf %s "${SHELL:-$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f7)}"';
+const DEFAULT_SHELL_PROBE_TIMEOUT_MS = 5_000;
+/** Every POSIX image has this, so it is the answer when the probe comes up empty. */
+const POSIX_FALLBACK_SHELL = "/bin/sh";
+
+/**
+ * Reduce a launch's environment to the entries that must be carried into the
+ * environment, as `[key, value]` pairs where an undefined value means "unset".
+ *
+ * The image already provides a full environment, so the daemon's ambient
+ * variables are deliberately not forwarded: entries in the base environment
+ * count only when the caller changed them relative to the daemon's own
+ * `process.env` (an added API key, a deleted NODE_OPTIONS, PASEO_AGENT_ID).
+ * Host environment variables reach the container the way the Dev Container
+ * spec intends — `containerEnv`/`remoteEnv` in devcontainer.json, which can
+ * pull from the host with `${localEnv:NAME}`.
+ */
+export function resolveContainerEnvEntries(
+  options: Pick<LaunchSpawnOptions, "baseEnv" | "env" | "envOverlay">,
+  daemonEnv: ProcessEnvRecord = process.env,
+): Array<[string, string | undefined]> {
+  const entries = new Map<string, string | undefined>();
+
+  const baseEnv = options.env ?? options.baseEnv;
+  if (baseEnv) {
+    for (const [key, value] of Object.entries(baseEnv)) {
+      if (HOST_OWNED_ENV_KEYS.has(key)) continue;
+      if (daemonEnv[key] === value) continue;
+      entries.set(key, value);
+    }
+    // A key the daemon has but the caller dropped is an intentional unset.
+    for (const key of Object.keys(daemonEnv)) {
+      if (HOST_OWNED_ENV_KEYS.has(key)) continue;
+      if (!(key in baseEnv)) entries.set(key, undefined);
+    }
+  }
+
+  for (const [key, value] of Object.entries(options.envOverlay ?? {})) {
+    entries.set(key, value);
+  }
+
+  return [...entries];
 }
 
 /**
  * ContainerExecLaunchStrategy — routes process spawning into a running
  * isolated environment via a configurable exec command.
  *
- * This strategy is generic: it takes an exec command prefix (e.g.
- * `["docker", "exec", "-i", "-u", "<user>", "-w", "<cwd>", "<id>"]`)
- * and prepends it to every spawned command. The prefix is constructed by
- * the backend that created the ExecutionHandle, so this class has no
- * knowledge of Docker, Podman, Kubernetes, or any specific runtime.
+ * This strategy is generic: the backend that created the environment supplies
+ * a ContainerExecSpec, so this class has no knowledge of Docker, Podman,
+ * Kubernetes, or any specific runtime.
  */
 export class ContainerExecLaunchStrategy implements ProcessLaunchStrategy {
   readonly isIsolated = true;
 
-  private readonly handle: ExecutionHandle;
-  private readonly execCommand: string;
-  private readonly execArgsPrefix: string[];
-  private readonly hostWorkspaceFolder: string;
+  private readonly spec: ContainerExecSpec;
+  private defaultShell: Promise<string> | null = null;
 
-  constructor(options: {
-    handle: ExecutionHandle;
-    /** Command to exec into the environment (e.g. "docker", "podman", "kubectl") */
-    execCommand: string;
-    /** Args before the target command (e.g. ["exec", "-u", "node", "-w", "/ws", "<id>"]) */
-    execArgsPrefix: string[];
-    hostWorkspaceFolder: string;
-  }) {
-    this.handle = options.handle;
-    this.execCommand = options.execCommand;
-    this.execArgsPrefix = options.execArgsPrefix;
-    this.hostWorkspaceFolder = options.hostWorkspaceFolder;
+  constructor(spec: ContainerExecSpec) {
+    this.spec = { ...spec, hostWorkspaceFolder: resolve(spec.hostWorkspaceFolder) };
   }
 
   spawn(command: string, args: string[], options?: LaunchSpawnOptions): ChildProcess {
-    const containerCwd = options?.cwd
-      ? this.resolveCwd(options.cwd)
-      : this.handle.remoteWorkspaceFolder;
+    const resolved = this.buildExecCommand(command, args, {
+      cwd: options?.cwd,
+      envEntries: resolveContainerEnvEntries(options ?? {}),
+      interactive: false,
+    });
 
-    // Insert -w and -e flags before the container ID (which is the last
-    // element of execArgsPrefix). docker exec syntax:
-    //   exec [OPTIONS] CONTAINER COMMAND [ARG...]
-    // All flags must precede the container ID; anything after it is the
-    // command and its args.
-    const execArgs = [...this.execArgsPrefix];
-    const containerIdIndex = execArgs.length - 1;
-    const flagsToInsert: string[] = ["-w", containerCwd];
-
-    // Pass env overlays as -e flags. Undefined values mean "unset this var"
-    // in the container — pass as -e KEY (without =value) so the container
-    // doesn't inherit it from its own environment.
-    if (options?.envOverlay) {
-      for (const [key, value] of Object.entries(options.envOverlay)) {
-        flagsToInsert.push("-e", value === undefined ? key : `${key}=${value}`);
-      }
-    }
-
-    execArgs.splice(containerIdIndex, 0, ...flagsToInsert);
-
-    execArgs.push(command, ...args);
-
-    // docker/podman needs PATH to be found on the host. The container's
-    // own PATH is set by the container image, not inherited from the host.
-    const childEnv: NodeJS.ProcessEnv = { ...process.env };
-    return spawn(this.execCommand, execArgs, {
-      cwd: this.hostWorkspaceFolder,
-      env: childEnv,
+    // The exec binary itself runs on the host, so it needs the daemon's own
+    // environment to be found and to reach the container runtime's socket.
+    return spawn(resolved.command, resolved.args, {
+      cwd: this.spec.hostWorkspaceFolder,
+      env: { ...process.env },
       stdio: options?.stdio ?? ["pipe", "pipe", "pipe"],
       windowsHide: true,
+      ...(options?.detached === undefined ? {} : { detached: options.detached }),
       ...(options?.signal ? { signal: options.signal } : {}),
     });
   }
-  wrapCommand(command: string, args: string[], options?: { cwd?: string }): ResolvedCommand {
-    const containerCwd = options?.cwd
-      ? this.resolveCwd(options.cwd)
-      : this.handle.remoteWorkspaceFolder;
-    // For terminals, insert -it for interactive mode after "exec".
-    // Insert -w before the container ID (which is the last element of execArgsPrefix).
-    // docker exec syntax: exec [OPTIONS] CONTAINER COMMAND [ARG...]
-    const execArgs = [...this.execArgsPrefix];
-    const execIndex = execArgs.indexOf("exec");
-    if (execIndex >= 0) {
-      execArgs.splice(execIndex + 1, 0, "-it");
-    }
-    const containerIdIndex = execArgs.length - 1;
-    execArgs.splice(containerIdIndex, 0, "-w", containerCwd);
-    execArgs.push(command, ...args);
-    return {
-      command: this.execCommand,
-      args: execArgs,
-    };
+
+  wrapCommand(command: string, args: string[], options?: WrapCommandOptions): ResolvedCommand {
+    return this.buildExecCommand(command, args, {
+      cwd: options?.cwd,
+      envEntries: Object.entries(options?.env ?? {}),
+      interactive: options?.interactive ?? false,
+    });
   }
 
-  resolveCwd(hostCwd: string): string {
-    const resolved = resolve(hostCwd);
-    if (resolved === this.hostWorkspaceFolder) {
-      return this.handle.remoteWorkspaceFolder;
+  private buildExecCommand(
+    command: string,
+    args: string[],
+    options: {
+      cwd?: string;
+      envEntries: Array<[string, string | undefined]>;
+      interactive: boolean;
+    },
+  ): ResolvedCommand {
+    const execArgs = [...this.spec.leadingArgs, ...this.spec.optionArgs];
+
+    if (options.interactive) {
+      execArgs.push(...this.spec.ttyArgs);
     }
-    if (resolved.startsWith(this.hostWorkspaceFolder + "/")) {
-      const relative = resolved.slice(this.hostWorkspaceFolder.length);
-      return this.handle.remoteWorkspaceFolder + relative;
+
+    if (this.spec.workdirFlag) {
+      const containerCwd = options.cwd
+        ? this.resolveCwd(options.cwd)
+        : this.spec.remoteWorkspaceFolder;
+      execArgs.push(this.spec.workdirFlag, containerCwd);
     }
-    return this.handle.remoteWorkspaceFolder;
+
+    if (this.spec.envFlag) {
+      for (const [key, value] of options.envEntries) {
+        // `-e KEY` (no value) unsets the variable inside the environment;
+        // `-e KEY=value` sets it.
+        execArgs.push(this.spec.envFlag, value === undefined ? key : `${key}=${value}`);
+      }
+    }
+
+    execArgs.push(...this.spec.targetArgs, command, ...args);
+    return { command: this.spec.command, args: execArgs };
   }
+
+  resolveCwd(cwd: string): string {
+    const resolved = resolve(cwd);
+    if (resolved === this.spec.hostWorkspaceFolder) {
+      return this.spec.remoteWorkspaceFolder;
+    }
+    if (resolved.startsWith(this.spec.hostWorkspaceFolder + "/")) {
+      const relative = resolved.slice(this.spec.hostWorkspaceFolder.length);
+      return this.spec.remoteWorkspaceFolder + relative;
+    }
+    if (
+      resolved === this.spec.remoteWorkspaceFolder ||
+      resolved.startsWith(this.spec.remoteWorkspaceFolder + "/")
+    ) {
+      // Already an in-environment path. Agents run inside the environment, so
+      // the paths they hand back (an ACP terminal's cwd, for instance) are
+      // environment paths — mapping must be idempotent for those.
+      return resolved;
+    }
+    // Only the workspace folder is mounted, so anything else has no counterpart
+    // inside the environment. The workspace folder is the one directory
+    // guaranteed to exist there.
+    return this.spec.remoteWorkspaceFolder;
+  }
+
+  resolveDaemonUrl(url: string): string | null {
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      return null;
+    }
+    if (!LOOPBACK_HOSTNAMES.has(parsed.hostname)) {
+      // Already an address the environment can route to (a LAN IP or a name).
+      return url;
+    }
+    // Loopback inside the environment is the environment itself.
+    if (!this.spec.hostGatewayAddress) return null;
+    parsed.hostname = this.spec.hostGatewayAddress;
+    return parsed.toString();
+  }
+
+  async resolveDefaultShell(): Promise<string> {
+    // One probe per strategy, so opening several terminals in the same
+    // container doesn't re-ask.
+    this.defaultShell ??= this.probeDefaultShell();
+    return this.defaultShell;
+  }
+
+  /**
+   * Ask the environment for the user's shell: `$SHELL` as the image defines it,
+   * falling back to the login shell in the user's passwd entry. Anything
+   * unusable — no answer, a relative path, an exec that never lands — resolves
+   * to `/bin/sh`, which every POSIX image has.
+   */
+  private async probeDefaultShell(): Promise<string> {
+    try {
+      const child = this.spawn("sh", ["-c", DEFAULT_SHELL_PROBE_SCRIPT], {
+        stdio: ["ignore", "pipe", "ignore"],
+        signal: AbortSignal.timeout(DEFAULT_SHELL_PROBE_TIMEOUT_MS),
+      });
+      let stdout = "";
+      child.stdout?.on("data", (chunk: Buffer | string) => {
+        stdout += chunk.toString();
+      });
+      // Rejects if the child errors first (exec not found, probe timed out).
+      await once(child, "close");
+      const probed = stdout.trim();
+      return probed.startsWith("/") ? probed : POSIX_FALLBACK_SHELL;
+    } catch {
+      return POSIX_FALLBACK_SHELL;
+    }
+  }
+
+  serialize(): ContainerExecSpec {
+    return { ...this.spec };
+  }
+}
+
+/** Rebuild a strategy from its serialized form (e.g. inside the terminal worker). */
+export function deserializeLaunchStrategy(
+  spec: ContainerExecSpec | null | undefined,
+): ProcessLaunchStrategy {
+  return spec ? new ContainerExecLaunchStrategy(spec) : new LocalLaunchStrategy();
 }

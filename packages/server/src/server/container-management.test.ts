@@ -27,18 +27,23 @@ import {
   type PersistedWorkspaceRecord,
 } from "./workspace-registry.js";
 import { WorkspaceAutoName } from "./workspace-auto-name.js";
+import type { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import type {
   ContainerBackend,
   ContainerInfo,
+  ContainerRef,
   ContainerUpOptions,
   ExecutionHandle,
 } from "./devcontainer/container-backend.js";
 import { createDevContainerBackend, createLaunchStrategyRegistry } from "./devcontainer/index.js";
 import { createContainerBackendRegistry } from "./devcontainer/container-backend-registry.js";
+import { ContainerProbeCoordinator } from "./devcontainer/container-probe-coordinator.js";
 import {
   ContainerExecLaunchStrategy,
   LocalLaunchStrategy,
+  deserializeLaunchStrategy,
+  resolveContainerEnvEntries,
 } from "./devcontainer/launch-strategy.js";
 import { execCommand } from "../utils/spawn.js";
 
@@ -49,17 +54,36 @@ const HANDLE: ExecutionHandle = {
   remoteWorkspaceFolder: "/workspaces/test",
 };
 
+/** The docker exec spec the dev container backend builds for a running container. */
+function dockerExecStrategy(
+  handle: ExecutionHandle,
+  hostWorkspaceFolder: string,
+): ContainerExecLaunchStrategy {
+  return new ContainerExecLaunchStrategy({
+    command: "docker",
+    leadingArgs: ["exec"],
+    optionArgs: ["-i", "-u", handle.remoteUser],
+    targetArgs: [handle.identifier],
+    workdirFlag: "-w",
+    envFlag: "-e",
+    ttyArgs: ["-t"],
+    hostWorkspaceFolder,
+    remoteWorkspaceFolder: handle.remoteWorkspaceFolder,
+  });
+}
+
 function createMockContainerBackend(
   options: {
     hasConfig?: (cwd: string) => boolean;
     isAvailable?: () => Promise<boolean>;
-    isAlreadyRunning?: (key: string, workspaceFolder: string) => Promise<boolean>;
+    isAlreadyRunning?: (ref: ContainerRef) => Promise<boolean>;
     configHash?: string | null;
   } = {},
-): ContainerBackend & { createStrategy: () => unknown } {
+): ContainerBackend {
   const handles = new Map<string, ExecutionHandle>();
   return {
     id: "devcontainer",
+    label: "Dev Container",
     isAvailable: options.isAvailable ?? (async () => true),
     hasConfig: options.hasConfig ?? (() => false),
     async up(opts: ContainerUpOptions) {
@@ -78,14 +102,14 @@ function createMockContainerBackend(
       handles.set(opts.key, HANDLE);
       return HANDLE;
     },
-    async stop(key: string) {
-      handles.delete(key);
+    async stop(ref: ContainerRef) {
+      handles.delete(ref.key);
     },
     getHandle(key: string) {
       return handles.get(key) ?? null;
     },
-    async getContainerInfo(key: string) {
-      const h = handles.get(key);
+    async getContainerInfo(ref: ContainerRef) {
+      const h = handles.get(ref.key);
       if (!h) return null;
       return {
         backend: "devcontainer",
@@ -99,16 +123,17 @@ function createMockContainerBackend(
     getConfigHash(_cwd: string) {
       return options.configHash ?? "hash-123";
     },
-    isAlreadyRunning:
-      options.isAlreadyRunning ?? (async (_key: string, _workspaceFolder: string) => false),
+    isAlreadyRunning: options.isAlreadyRunning ?? (async (_ref: ContainerRef) => false),
+    async removeAbandonedProbeContainers() {
+      return 0;
+    },
     createStrategy: () => new LocalLaunchStrategy(),
   };
 }
 
 function createContainerTestSession(options: {
-  backend: ContainerBackend & {
-    createStrategy: (key: string, workspaceFolder: string, handle: ExecutionHandle) => unknown;
-  };
+  backend: ContainerBackend;
+  providerSnapshotManager?: ProviderSnapshotManager;
 }): Session {
   const logger = createTestLogger();
   const emitted = options.emitted ?? [];
@@ -196,7 +221,8 @@ function createContainerTestSession(options: {
       agentManager,
       workspaceRegistry,
       workspaceGitService: createNoopWorkspaceGitService(),
-      providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+      providerSnapshotManager:
+        options.providerSnapshotManager ?? createProviderSnapshotManagerStub().manager,
       readDaemonConfig: () => ({ metadataGeneration: { providers: [] } }),
       gitMutation: { notifyGitMutation: async () => {} },
       emitWorkspaceUpdateForCwd: async () => {},
@@ -210,7 +236,8 @@ function createContainerTestSession(options: {
     mcpBaseUrl: null,
     stt: null,
     tts: null,
-    providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+    providerSnapshotManager:
+      options.providerSnapshotManager ?? createProviderSnapshotManagerStub().manager,
     terminalManager: null,
     containerBackends: createContainerBackendRegistry([options.backend]),
     launchStrategyRegistry,
@@ -281,7 +308,7 @@ test("describeWorkspaceRecord starts container directly when containerBackend is
   await internals.describeWorkspaceRecord(workspace);
 
   expect(upSpy).toHaveBeenCalledWith(
-    expect.objectContaining({ key: "ws-test", workspaceFolder: cwd }),
+    expect.objectContaining({ key: "ws-test", kind: "workspace", workspaceFolder: cwd }),
   );
 });
 
@@ -511,7 +538,7 @@ test("container.restart.request stops and restarts the container", async () => {
   });
 
   expect(restartSpy).toHaveBeenCalledWith(
-    expect.objectContaining({ key: "ws-test", workspaceFolder: cwd }),
+    expect.objectContaining({ key: "ws-test", kind: "workspace", workspaceFolder: cwd }),
   );
   const response = emitted.find((m) => m.type === "container.restart.response");
   expect(response).toBeDefined();
@@ -593,7 +620,7 @@ test("container.availability.request returns docker availability and config dete
   expect(response).toBeDefined();
   if (response && response.type === "container.availability.response") {
     expect(response.payload.backends).toEqual([
-      { id: "devcontainer", label: "devcontainer", available: true, hasConfig: true },
+      { id: "devcontainer", label: "Dev Container", available: true, hasConfig: true },
     ]);
   }
 });
@@ -630,9 +657,95 @@ test("container.availability.request returns false when docker unavailable and n
   expect(response).toBeDefined();
   if (response && response.type === "container.availability.response") {
     expect(response.payload.backends).toEqual([
-      { id: "devcontainer", label: "devcontainer", available: false, hasConfig: false },
+      { id: "devcontainer", label: "Dev Container", available: false, hasConfig: false },
     ]);
   }
+});
+
+test("container.probe.request answers with the entries found in the container", async () => {
+  const cwd = makeDevcontainerDir();
+  const emitted: SessionOutboundMessage[] = [];
+  const backend = createMockContainerBackend({ hasConfig: () => true });
+  const snapshotStub = createProviderSnapshotManagerStub();
+  const containerEntry = {
+    provider: "claude" as const,
+    status: "ready" as const,
+    enabled: true,
+    models: [{ id: "container-model", name: "Container Model" }],
+  };
+  snapshotStub.probeSnapshotForCwd.mockResolvedValue([containerEntry]);
+
+  const session = createContainerTestSession({
+    backend,
+    providerSnapshotManager: snapshotStub.manager,
+    workspaces: [],
+    emitted,
+  });
+
+  const internals = asSessionInternals<{
+    handleContainerProbeRequest: (msg: {
+      type: "container.probe.request";
+      cwd: string;
+      containerBackend: string;
+      requestId: string;
+    }) => Promise<void>;
+  }>(session);
+
+  await internals.handleContainerProbeRequest({
+    type: "container.probe.request",
+    cwd,
+    containerBackend: "devcontainer",
+    requestId: "req-1",
+  });
+
+  const response = emitted.find((m) => m.type === "container.probe.response");
+  expect(response).toBeDefined();
+  if (response?.type !== "container.probe.response") throw new Error("unreachable");
+  expect(response.payload.success).toBe(true);
+  expect(response.payload.cancelled).toBe(false);
+  // The probe container is gone by now, so the client cannot ask again — these
+  // entries have to be the whole answer.
+  expect(response.payload.entries).toEqual([containerEntry]);
+  // The shared snapshot for this directory is left alone: workspaces already
+  // open on it are not running in this throwaway container.
+  expect(snapshotStub.refreshSnapshotForCwd).not.toHaveBeenCalled();
+});
+
+test("container.probe.request reports a failure instead of pretending it succeeded", async () => {
+  const cwd = makeDevcontainerDir();
+  const emitted: SessionOutboundMessage[] = [];
+  const backend = createMockContainerBackend({ hasConfig: () => true });
+  const snapshotStub = createProviderSnapshotManagerStub();
+  snapshotStub.probeSnapshotForCwd.mockRejectedValue(new Error("container exploded"));
+
+  const session = createContainerTestSession({
+    backend,
+    providerSnapshotManager: snapshotStub.manager,
+    workspaces: [],
+    emitted,
+  });
+
+  const internals = asSessionInternals<{
+    handleContainerProbeRequest: (msg: {
+      type: "container.probe.request";
+      cwd: string;
+      containerBackend: string;
+      requestId: string;
+    }) => Promise<void>;
+  }>(session);
+
+  await internals.handleContainerProbeRequest({
+    type: "container.probe.request",
+    cwd,
+    containerBackend: "devcontainer",
+    requestId: "req-1",
+  });
+
+  const response = emitted.find((m) => m.type === "container.probe.response");
+  if (response?.type !== "container.probe.response") throw new Error("unreachable");
+  expect(response.payload.success).toBe(false);
+  expect(response.payload.error).toContain("container exploded");
+  expect(response.payload.entries).toEqual([]);
 });
 
 // ---------------------------------------------------------------------------
@@ -666,7 +779,9 @@ dockerTest(
     expect(await backend.isAvailable()).toBe(true);
 
     // isAlreadyRunning runs `docker ps --filter label=...` — no container for a fresh dir
-    expect(await backend.isAlreadyRunning("real-test", cwd)).toBe(false);
+    expect(
+      await backend.isAlreadyRunning({ key: "real-test", kind: "workspace", workspaceFolder: cwd }),
+    ).toBe(false);
 
     // getConfigHash hashes the devcontainer.json content
     const hash1 = backend.getConfigHash(cwd);
@@ -717,30 +832,37 @@ dockerTest(
     // Wait for the container to actually start in the background.
     // The maybeStartContainerForWorkspace IIFE runs isAvailable, isAlreadyRunning,
     // then `devcontainer up` which pulls alpine:latest + starts the container.
-    // Poll getContainerInfo (not isAlreadyRunning) because getContainerInfo
-    // requires the in-memory handle to be set, which only happens after up()
-    // completes. isAlreadyRunning can return true via `docker ps` before the
-    // handle is set, causing a race.
+    // Poll getContainerInfo, which reports the container only once it is
+    // actually inspectable, rather than isAlreadyRunning, which flips as soon
+    // as `docker ps` sees the container.
     const { promise: containerReady, resolve: resolveContainerReady } =
       Promise.withResolvers<void>();
     const checkInterval = setInterval(() => {
-      backend.getContainerInfo("ws-test").then((info) => {
-        if (info) {
-          clearInterval(checkInterval);
-          resolveContainerReady();
-        }
-        return undefined;
-      });
+      backend
+        .getContainerInfo({ key: "ws-test", kind: "workspace", workspaceFolder: cwd })
+        .then((info) => {
+          if (info) {
+            clearInterval(checkInterval);
+            resolveContainerReady();
+          }
+          return undefined;
+        });
     }, 1000);
     await containerReady;
 
-    const info = await backend.getContainerInfo("ws-test");
+    const info = await backend.getContainerInfo({
+      key: "ws-test",
+      kind: "workspace",
+      workspaceFolder: cwd,
+    });
     expect(info).not.toBeNull();
     expect(info?.backend).toBe("devcontainer");
     expect(info?.image).toBeDefined();
     expect(info?.containerName).toBeDefined();
 
-    await backend.stop("ws-test").catch(() => {});
+    await backend
+      .stop({ key: "ws-test", kind: "workspace", workspaceFolder: cwd }, { remove: true })
+      .catch(() => {});
   },
   120_000,
 );
@@ -777,13 +899,7 @@ test("awaitStrategy returns isolated strategy after container starts for devcont
   // The launch strategy registry should now have an isolated strategy for this cwd.
   const registry = createLaunchStrategyRegistry({
     logger: createTestLogger(),
-    createStrategy: (_key, workspaceFolder, handle) =>
-      new ContainerExecLaunchStrategy({
-        handle,
-        execCommand: "docker",
-        execArgsPrefix: ["exec", "-u", handle.remoteUser, handle.identifier],
-        hostWorkspaceFolder: workspaceFolder,
-      }),
+    createStrategy: (_key, workspaceFolder, handle) => dockerExecStrategy(handle, workspaceFolder),
   });
   // Register the same way maybeStartContainerForWorkspace does
   registry.registerPendingActivation("ws-test");
@@ -818,13 +934,7 @@ test("awaitStrategy returns local strategy for host workspace", async () => {
   // No container was started, so awaitStrategy should return local strategy.
   const registry = createLaunchStrategyRegistry({
     logger: createTestLogger(),
-    createStrategy: (_key, workspaceFolder, handle) =>
-      new ContainerExecLaunchStrategy({
-        handle,
-        execCommand: "docker",
-        execArgsPrefix: ["exec", "-u", handle.remoteUser, handle.identifier],
-        hostWorkspaceFolder: workspaceFolder,
-      }),
+    createStrategy: (_key, workspaceFolder, handle) => dockerExecStrategy(handle, workspaceFolder),
   });
   const strategy = await registry.awaitStrategy("ws-test");
   expect(strategy.isIsolated).toBe(false);
@@ -833,13 +943,7 @@ test("awaitStrategy returns local strategy for host workspace", async () => {
 test("awaitStrategy throws when container fails to start (no fallback to host)", async () => {
   const registry = createLaunchStrategyRegistry({
     logger: createTestLogger(),
-    createStrategy: (_key, workspaceFolder, handle) =>
-      new ContainerExecLaunchStrategy({
-        handle,
-        execCommand: "docker",
-        execArgsPrefix: ["exec", "-u", handle.remoteUser, handle.identifier],
-        hostWorkspaceFolder: workspaceFolder,
-      }),
+    createStrategy: (_key, workspaceFolder, handle) => dockerExecStrategy(handle, workspaceFolder),
   });
 
   // Register a pending activation, then deactivate while awaitStrategy is waiting.
@@ -855,55 +959,177 @@ test("awaitStrategy throws when container fails to start (no fallback to host)",
   await expect(strategyPromise).rejects.toThrow();
 });
 
-test("ContainerExecLaunchStrategy.wrapCommand produces valid docker exec for terminal", () => {
-  const strategy = new ContainerExecLaunchStrategy({
-    handle: HANDLE,
-    execCommand: "docker",
-    execArgsPrefix: ["exec", "-u", HANDLE.remoteUser, HANDLE.identifier],
-    hostWorkspaceFolder: "/tmp/test-workspace",
+test("wrapCommand builds an interactive exec that runs in the container workspace", () => {
+  const strategy = dockerExecStrategy(HANDLE, "/tmp/test-workspace");
+
+  // Terminal creation: the resolved shell command with no args.
+  const result = strategy.wrapCommand("/bin/zsh", [], {
+    cwd: "/tmp/test-workspace",
+    interactive: true,
   });
 
-  // Simulate terminal creation: wrapCommand is called with the resolved shell
-  // command (e.g., /bin/zsh) and empty args.
-  const result = strategy.wrapCommand("/bin/zsh", [], { cwd: "/tmp/test-workspace" });
-
   expect(result.command).toBe("docker");
-  // Args should be: exec -it -w /workspaces/test -u root <container-id> /bin/zsh
   expect(result.args).toContain("exec");
-  expect(result.args).toContain("-it");
+  // A terminal needs both halves of an interactive TTY.
+  expect(result.args).toContain("-i");
+  expect(result.args).toContain("-t");
   expect(result.args).toContain("-u");
   expect(result.args).toContain(HANDLE.remoteUser);
   expect(result.args).toContain(HANDLE.identifier);
   expect(result.args).toContain("-w");
   expect(result.args).toContain(HANDLE.remoteWorkspaceFolder);
   expect(result.args).toContain("/bin/zsh");
-  // -w should come before the container ID
-  const wIndex = result.args.indexOf("-w");
+  // Everything after the container ID is the command, so every flag has to
+  // come before it.
   const idIndex = result.args.indexOf(HANDLE.identifier);
-  expect(wIndex).toBeLessThan(idIndex);
+  expect(result.args.indexOf("-w")).toBeLessThan(idIndex);
+  expect(result.args.indexOf("-t")).toBeLessThan(idIndex);
+  expect(idIndex).toBeLessThan(result.args.indexOf("/bin/zsh"));
 });
 
-test("ContainerExecLaunchStrategy.wrapCommand produces valid docker exec with args", () => {
-  const strategy = new ContainerExecLaunchStrategy({
-    handle: HANDLE,
-    execCommand: "docker",
-    execArgsPrefix: ["exec", "-u", HANDLE.remoteUser, HANDLE.identifier],
-    hostWorkspaceFolder: "/tmp/test-workspace",
-  });
+test("wrapCommand keeps the command's own args and omits the TTY when not interactive", () => {
+  const strategy = dockerExecStrategy(HANDLE, "/tmp/test-workspace");
 
-  // Simulate agent creation: wrapCommand is called with the agent binary
-  // and its arguments.
   const result = strategy.wrapCommand("claude", ["--print", "hello"], {
     cwd: "/tmp/test-workspace",
   });
 
   expect(result.command).toBe("docker");
   expect(result.args).toContain("exec");
-  // spawn (not wrapCommand) doesn't add -it; only wrapCommand does for terminals
-  expect(result.args).toContain("-it");
-  expect(result.args).toContain("claude");
-  expect(result.args).toContain("--print");
-  expect(result.args).toContain("hello");
+  // A piped process must not get a TTY, or its stdout stops being a pipe.
+  expect(result.args).not.toContain("-t");
+  expect(result.args.slice(result.args.indexOf(HANDLE.identifier) + 1)).toEqual([
+    "claude",
+    "--print",
+    "hello",
+  ]);
+});
+
+test("wrapCommand carries the terminal environment into the container", () => {
+  const strategy = dockerExecStrategy(HANDLE, "/tmp/test-workspace");
+
+  const result = strategy.wrapCommand("/bin/zsh", [], {
+    cwd: "/tmp/test-workspace",
+    env: { PASEO_TERMINAL_ID: "term-1", PASEO_ACTIVITY_TOKEN: "tok" },
+    interactive: true,
+  });
+
+  const idIndex = result.args.indexOf(HANDLE.identifier);
+  expect(result.args).toContain("PASEO_TERMINAL_ID=term-1");
+  expect(result.args).toContain("PASEO_ACTIVITY_TOKEN=tok");
+  expect(result.args.indexOf("PASEO_TERMINAL_ID=term-1")).toBeLessThan(idIndex);
+});
+
+test("wrapCommand maps a subdirectory of the workspace to its container path", () => {
+  const strategy = dockerExecStrategy(HANDLE, "/tmp/test-workspace");
+
+  const result = strategy.wrapCommand("/bin/zsh", [], { cwd: "/tmp/test-workspace/packages/app" });
+
+  expect(result.args[result.args.indexOf("-w") + 1]).toBe("/workspaces/test/packages/app");
+});
+
+test("resolveCwd is idempotent for paths that are already container paths", () => {
+  // Agents run inside the container, so the paths they hand back (an ACP
+  // terminal's cwd, for instance) are container paths already.
+  const strategy = dockerExecStrategy(HANDLE, "/tmp/test-workspace");
+
+  expect(strategy.resolveCwd("/workspaces/test/src")).toBe("/workspaces/test/src");
+  expect(strategy.resolveCwd("/tmp/test-workspace/src")).toBe("/workspaces/test/src");
+  // Nothing outside the workspace is mounted; the workspace folder is the one
+  // directory guaranteed to exist.
+  expect(strategy.resolveCwd("/etc")).toBe("/workspaces/test");
+});
+
+test("container env forwards caller changes and unsets, not the daemon's own environment", () => {
+  const daemonEnv = { PATH: "/host/bin", HOME: "/home/host", SHARED: "same", DROPPED: "gone" };
+
+  const entries = resolveContainerEnvEntries(
+    {
+      // The base env the SDK hands us is the daemon's environment plus its own
+      // additions, minus what it deliberately removed.
+      env: { PATH: "/host/bin", HOME: "/home/host", SHARED: "same", ADDED: "yes" },
+      envOverlay: { CLAUDECODE: undefined, PASEO_AGENT_ID: "agent-1" },
+    },
+    daemonEnv,
+  );
+  const asObject = Object.fromEntries(entries);
+
+  expect(asObject).toHaveProperty("ADDED", "yes");
+  expect(asObject).toHaveProperty("PASEO_AGENT_ID", "agent-1");
+  // Explicitly unset in the container, so the image's own value cannot leak in.
+  expect(entries).toContainEqual(["CLAUDECODE", undefined]);
+  expect(entries).toContainEqual(["DROPPED", undefined]);
+  // The image owns these, and an unchanged value carries no caller intent.
+  expect(asObject).not.toHaveProperty("PATH");
+  expect(asObject).not.toHaveProperty("HOME");
+  expect(asObject).not.toHaveProperty("SHARED");
+});
+
+test("resolveDaemonUrl rewrites loopback to the container's host gateway", () => {
+  const withGateway = new ContainerExecLaunchStrategy({
+    command: "docker",
+    leadingArgs: ["exec"],
+    optionArgs: [],
+    targetArgs: [HANDLE.identifier],
+    workdirFlag: "-w",
+    envFlag: "-e",
+    ttyArgs: ["-t"],
+    hostWorkspaceFolder: "/tmp/test-workspace",
+    remoteWorkspaceFolder: HANDLE.remoteWorkspaceFolder,
+    hostGatewayAddress: "172.17.0.1",
+  });
+
+  expect(withGateway.resolveDaemonUrl("http://127.0.0.1:6767/mcp/agents")).toBe(
+    "http://172.17.0.1:6767/mcp/agents",
+  );
+  // A routable address is left alone.
+  expect(withGateway.resolveDaemonUrl("http://10.0.0.5:6767/mcp/agents")).toBe(
+    "http://10.0.0.5:6767/mcp/agents",
+  );
+  // Without a gateway the daemon is unreachable — callers drop the feature
+  // rather than hand out an address that silently times out.
+  expect(
+    dockerExecStrategy(HANDLE, "/tmp/test-workspace").resolveDaemonUrl(
+      "http://127.0.0.1:6767/mcp/agents",
+    ),
+  ).toBeNull();
+});
+
+test("the host strategy leaves the default shell to the terminal", async () => {
+  await expect(new LocalLaunchStrategy().resolveDefaultShell()).resolves.toBeNull();
+});
+
+test("an unanswerable shell probe resolves to /bin/sh", async () => {
+  // Every POSIX image has /bin/sh, so a container that cannot answer still
+  // gets a launchable terminal instead of a host path it does not have.
+  const strategy = new ContainerExecLaunchStrategy({
+    command: "paseo-no-such-container-runtime",
+    leadingArgs: ["exec"],
+    optionArgs: [],
+    targetArgs: [HANDLE.identifier],
+    workdirFlag: "-w",
+    envFlag: "-e",
+    ttyArgs: ["-t"],
+    hostWorkspaceFolder: "/tmp/test-workspace",
+    remoteWorkspaceFolder: HANDLE.remoteWorkspaceFolder,
+  });
+
+  await expect(strategy.resolveDefaultShell()).resolves.toBe("/bin/sh");
+});
+
+test("a serialized strategy round-trips into an identical one", () => {
+  // Terminals are created in a worker process, which can only receive data.
+  const strategy = dockerExecStrategy(HANDLE, "/tmp/test-workspace");
+  const restored = deserializeLaunchStrategy(strategy.serialize());
+
+  expect(restored.isIsolated).toBe(true);
+  expect(
+    restored.wrapCommand("/bin/zsh", [], { cwd: "/tmp/test-workspace", interactive: true }),
+  ).toEqual(
+    strategy.wrapCommand("/bin/zsh", [], { cwd: "/tmp/test-workspace", interactive: true }),
+  );
+  expect(new LocalLaunchStrategy().serialize()).toBeNull();
+  expect(deserializeLaunchStrategy(null).isIsolated).toBe(false);
 });
 
 test("resolveLaunchStrategy returns null for host workspace (agents run on host)", async () => {
@@ -980,7 +1206,11 @@ dockerTest(
     expect(await backend.isAvailable()).toBe(true);
 
     // Start the container directly
-    const handle = await backend.up({ key: "real-launch-1", workspaceFolder: cwd });
+    const handle = await backend.up({
+      key: "real-launch-1",
+      kind: "workspace",
+      workspaceFolder: cwd,
+    });
     expect(handle.identifier).toBeDefined();
     expect(handle.remoteUser).toBeDefined();
     expect(handle.remoteWorkspaceFolder).toBeDefined();
@@ -995,7 +1225,9 @@ dockerTest(
     const strategy = await registry.awaitStrategy("real-launch-1");
     expect(strategy.isIsolated).toBe(true);
 
-    await backend.stop("real-launch-1").catch(() => {});
+    await backend
+      .stop({ key: "real-launch-1", kind: "workspace", workspaceFolder: cwd })
+      .catch(() => {});
   },
   120_000,
 );
@@ -1009,19 +1241,21 @@ dockerTest(
 
     expect(await backend.isAvailable()).toBe(true);
 
-    const handle = await backend.up({ key: "real-launch-2", workspaceFolder: cwd });
-
-    const strategy = new ContainerExecLaunchStrategy({
-      handle,
-      execCommand: "docker",
-      execArgsPrefix: ["exec", "-u", handle.remoteUser, handle.identifier],
-      hostWorkspaceFolder: cwd,
+    const handle = await backend.up({
+      key: "real-launch-2",
+      kind: "workspace",
+      workspaceFolder: cwd,
     });
 
+    const strategy = backend.createStrategy("real-launch-2", cwd, handle);
+
     // spawn is used for agents (non-interactive). It does NOT add -it.
-    // Verify the command actually runs inside the container.
-    const child = strategy.spawn("echo", ["agent-in-container"], {
+    // Verify the command actually runs inside the container, and that the
+    // launch environment lands with the process rather than on the host-side
+    // exec call.
+    const child = strategy.spawn("sh", ["-c", 'echo "agent-in-container $AGENT_TOKEN"'], {
       cwd,
+      envOverlay: { AGENT_TOKEN: "from-launch-env" },
       stdio: ["pipe", "pipe", "pipe"],
     });
 
@@ -1039,9 +1273,162 @@ dockerTest(
     });
     const output = await promise;
 
-    expect(output).toBe("agent-in-container");
+    expect(output).toBe("agent-in-container from-launch-env");
 
-    await backend.stop("real-launch-2").catch(() => {});
+    await backend
+      .stop({ key: "real-launch-2", kind: "workspace", workspaceFolder: cwd })
+      .catch(() => {});
+  },
+  120_000,
+);
+
+dockerTest(
+  "real backend: a probe builds a usable container, streams progress, and removes it",
+  async () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "paseo-devcontainer-real-"));
+    writeFileSync(path.join(cwd, ".devcontainer.json"), '{"image":"alpine:latest"}');
+    const backend = createDevContainerBackend({ logger: createTestLogger() });
+    const progressLines: string[] = [];
+    let commandOutputInsideProbe = "";
+
+    const coordinator = new ContainerProbeCoordinator({
+      logger: createTestLogger(),
+      resolveBackend: () => backend,
+      probeProviders: async ({ launchStrategy }) => {
+        // Providers are listed by running them inside the probe container, so
+        // the container has to be alive and exec-able at exactly this point.
+        const child = launchStrategy.spawn("sh", ["-c", "echo probe-ran"], {
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        const { promise, resolve } = Promise.withResolvers<void>();
+        child.stdout?.on("data", (data: Buffer) => {
+          commandOutputInsideProbe += data.toString();
+        });
+        child.on("close", () => resolve());
+        await promise;
+        return [{ provider: "claude" as const, status: "ready" as const, enabled: true }];
+      },
+    });
+
+    const result = await coordinator.probe({
+      requestId: "real-probe-1",
+      cwd,
+      containerBackend: "devcontainer",
+      onProgress: (line) => progressLines.push(line),
+    });
+
+    expect(result.status).toBe("success");
+    expect(result.entries).toHaveLength(1);
+    expect(commandOutputInsideProbe.trim()).toBe("probe-ran");
+    // Progress arrives while the CLI runs, not replayed after it finishes.
+    expect(progressLines.length).toBeGreaterThan(0);
+
+    // Nothing of the probe survives it.
+    const leftovers = await execCommand(
+      "docker",
+      [
+        "ps",
+        "-aq",
+        "--filter",
+        "label=paseo.owner=probe",
+        "--filter",
+        `label=devcontainer.local_folder=${cwd}`,
+      ],
+      { envMode: "internal", timeout: 10_000 },
+    );
+    expect(leftovers.stdout.trim()).toBe("");
+  },
+  180_000,
+);
+
+dockerTest(
+  "real backend: a probe and a workspace on the same directory get separate containers",
+  async () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "paseo-devcontainer-real-"));
+    writeFileSync(path.join(cwd, ".devcontainer.json"), '{"image":"alpine:latest"}');
+    const backend = createDevContainerBackend({ logger: createTestLogger() });
+    const workspaceRef = {
+      key: "ws-identity-test",
+      kind: "workspace" as const,
+      workspaceFolder: cwd,
+    };
+    const probeRef = { key: "probe:identity-test", kind: "probe" as const, workspaceFolder: cwd };
+
+    expect(await backend.isAvailable()).toBe(true);
+
+    try {
+      const workspaceHandle = await backend.up(workspaceRef);
+      const probeHandle = await backend.up(probeRef);
+
+      // The devcontainer CLI identifies containers by workspace folder unless
+      // it is given id labels, so without them these would be one container —
+      // and tearing the probe down would kill the workspace's agents.
+      expect(probeHandle.identifier).not.toBe(workspaceHandle.identifier);
+
+      await backend.stop(probeRef, { remove: true });
+
+      expect(await backend.isAlreadyRunning(probeRef)).toBe(false);
+      expect(await backend.isAlreadyRunning(workspaceRef)).toBe(true);
+    } finally {
+      await backend.stop(workspaceRef, { remove: true }).catch(() => {});
+      await backend.stop(probeRef, { remove: true }).catch(() => {});
+    }
+  },
+  180_000,
+);
+
+dockerTest(
+  "real backend: probe containers left by a previous run are reaped, workspace ones are not",
+  async () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "paseo-devcontainer-real-"));
+    writeFileSync(path.join(cwd, ".devcontainer.json"), '{"image":"alpine:latest"}');
+    const backend = createDevContainerBackend({ logger: createTestLogger() });
+    const workspaceRef = { key: "ws-reap-test", kind: "workspace" as const, workspaceFolder: cwd };
+    const probeRef = { key: "probe:reap-test", kind: "probe" as const, workspaceFolder: cwd };
+
+    expect(await backend.isAvailable()).toBe(true);
+
+    try {
+      await backend.up(workspaceRef);
+      await backend.up(probeRef);
+
+      // Stands in for a daemon that died mid-probe: the container is still
+      // there, and a fresh daemon has no handle for it.
+      const removed = await backend.removeAbandonedProbeContainers();
+
+      expect(removed).toBeGreaterThanOrEqual(1);
+      expect(await backend.isAlreadyRunning(probeRef)).toBe(false);
+      expect(await backend.isAlreadyRunning(workspaceRef)).toBe(true);
+    } finally {
+      await backend.stop(workspaceRef, { remove: true }).catch(() => {});
+      await backend.stop(probeRef, { remove: true }).catch(() => {});
+    }
+  },
+  180_000,
+);
+
+dockerTest(
+  "real backend: the terminal shell comes from the container's own user, not the host",
+  async () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "paseo-devcontainer-real-"));
+    // /bin/ash is a real alpine shell and is not the /bin/sh fallback, so the
+    // assertion can only pass if the probe actually read the container.
+    writeFileSync(
+      path.join(cwd, ".devcontainer.json"),
+      '{"image":"alpine:latest","containerEnv":{"SHELL":"/bin/ash"}}',
+    );
+    const backend = createDevContainerBackend({ logger: createTestLogger() });
+
+    expect(await backend.isAvailable()).toBe(true);
+
+    const handle = await backend.up({ key: "real-shell", kind: "workspace", workspaceFolder: cwd });
+    const strategy = backend.createStrategy("real-shell", cwd, handle);
+
+    expect(await strategy.resolveDefaultShell()).toBe("/bin/ash");
+
+    await backend
+      .stop({ key: "real-shell", kind: "workspace", workspaceFolder: cwd })
+      .catch(() => {});
   },
   120_000,
 );
@@ -1082,13 +1469,15 @@ dockerTest(
     const { promise: containerReady, resolve: resolveContainerReady } =
       Promise.withResolvers<void>();
     const checkInterval = setInterval(() => {
-      backend.isAlreadyRunning("ws-test", cwd).then((running) => {
-        if (running) {
-          clearInterval(checkInterval);
-          resolveContainerReady();
-        }
-        return undefined;
-      });
+      backend
+        .isAlreadyRunning({ key: "ws-test", kind: "workspace", workspaceFolder: cwd })
+        .then((running) => {
+          if (running) {
+            clearInterval(checkInterval);
+            resolveContainerReady();
+          }
+          return undefined;
+        });
     }, 1000);
     await containerReady;
 
@@ -1098,7 +1487,9 @@ dockerTest(
     const strategy = await internals.launchStrategyRegistry.awaitStrategy("ws-test");
     expect(strategy.isIsolated).toBe(true);
 
-    await backend.stop("ws-test").catch(() => {});
+    await backend
+      .stop({ key: "ws-test", kind: "workspace", workspaceFolder: cwd }, { remove: true })
+      .catch(() => {});
   },
   120_000,
 );

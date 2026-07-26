@@ -36,7 +36,7 @@ export function createContainerBackendRegistry(
         }
         results.push({
           id: backend.id,
-          label: backend.id,
+          label: backend.label,
           available,
           hasConfig: backend.hasConfig(cwd),
         });

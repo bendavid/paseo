@@ -1308,6 +1308,8 @@ export const ptBR: TranslationResources = {
       devcontainer: "Contêiner de desenvolvimento",
       dockerUnavailable: "Docker não está disponível",
       noDevContainerConfig: "Nenhum devcontainer.json encontrado neste diretório",
+      probing: "{{backend}} — iniciando…",
+      probeFailed: "Não foi possível inspecionar o contêiner: {{error}}",
     },
   },
   onboarding: {

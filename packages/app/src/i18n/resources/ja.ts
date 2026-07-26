@@ -1294,6 +1294,8 @@ export const ja: TranslationResources = {
       devcontainer: "Dev Container",
       dockerUnavailable: "Dockerは利用できません",
       noDevContainerConfig: "このディレクトリにdevcontainer.jsonが見つかりません",
+      probing: "{{backend}} — 起動中…",
+      probeFailed: "コンテナを検査できませんでした: {{error}}",
     },
   },
   onboarding: {

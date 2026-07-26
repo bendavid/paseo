@@ -1,48 +1,30 @@
 import type { Logger } from "pino";
 import type { ProcessLaunchStrategy } from "./launch-strategy.js";
 import { LocalLaunchStrategy } from "./launch-strategy.js";
-import type { ExecutionHandle } from "./container-backend.js";
+import type { ExecutionHandle, LaunchStrategyFactory } from "./container-backend.js";
 
-/**
- * A factory that creates a ProcessLaunchStrategy for a given workspace
- * and execution handle. Backends provide this factory so the registry
- * remains backend-agnostic.
- *
- * `key` is the opaque workspace identifier (workspaceId, or a synthetic
- * `probe:<cwd>` key for probe containers). `workspaceFolder` is the
- * host-side path the backend needs to locate devcontainer.json and to
- * pass as `--workspace-folder` to the CLI.
- */
-export type LaunchStrategyFactory = (
-  key: string,
-  workspaceFolder: string,
-  handle: ExecutionHandle,
-) => ProcessLaunchStrategy;
+export type { LaunchStrategyFactory };
 
 /**
  * LaunchStrategyRegistry — resolves the ProcessLaunchStrategy for a given
  * workspace. A workspace with a running isolated environment gets a
- * backend-specific strategy; all others get LocalLaunchStrategy.
+ * backend-specific strategy; all others get LocalLaunchStrategy. Probe
+ * containers never enter it — they are addressed by the caller that made them.
  *
  * The registry is backend-agnostic: it receives a strategy factory from
  * the active backend and uses it to create strategies when environments
  * are activated. Adding a new backend does not require changing this registry.
  *
- * Containers are keyed by an opaque `key` string (the workspaceId, or a
- * synthetic `probe:<cwd>` key for short-lived probe containers) rather than
- * by workspace folder. This lets two workspaces that share a cwd maintain
- * independent containers, and keeps the registry free of path resolution.
+ * Containers are keyed by workspaceId rather than by workspace folder, so two
+ * workspaces that share a cwd keep independent containers and the registry
+ * stays free of path resolution.
  *
- * When a container is starting (pending), `getStrategy` returns the local
- * strategy immediately, but `awaitStrategy` blocks until the container is
- * ready. Callers that need the container (agent spawn, terminal creation)
- * should use `awaitStrategy` to avoid running on the host during startup.
+ * Every caller uses `awaitStrategy`: a container that is still starting must
+ * not send the process to the host in the meantime, so the call blocks until
+ * the container is ready and rejects if it never arrives.
  */
 
 export interface LaunchStrategyRegistry {
-  /** Get the launch strategy for a workspace synchronously (local if no container) */
-  getStrategy(key: string): ProcessLaunchStrategy;
-
   /**
    * Get the launch strategy for a workspace, awaiting any pending container
    * activation. If a container is starting for this workspace, this blocks
@@ -98,10 +80,6 @@ export function createLaunchStrategyRegistry(deps: {
   const pendingActivations = new Map<string, PendingActivation>();
 
   return {
-    getStrategy(key: string): ProcessLaunchStrategy {
-      return isolatedStrategies.get(key) ?? localStrategy;
-    },
-
     async awaitStrategy(key: string): Promise<ProcessLaunchStrategy> {
       const existing = isolatedStrategies.get(key);
       if (existing) return existing;
@@ -140,6 +118,10 @@ export function createLaunchStrategyRegistry(deps: {
         resolveFn = res;
         rejectFn = rej;
       });
+      // A cancelled activation with nobody waiting on it is normal (the
+      // container starts in the background). Without this the rejection would
+      // surface as an unhandled promise rejection and take the daemon down.
+      promise.catch(() => undefined);
       pendingActivations.set(key, { promise, resolve: resolveFn, reject: rejectFn });
     },
 

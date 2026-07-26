@@ -1,8 +1,10 @@
 import { type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
 import type { Logger } from "pino";
 
-import { spawnProcess } from "../../../utils/spawn.js";
-import type { ProcessLaunchStrategy } from "../../devcontainer/launch-strategy.js";
+import {
+  LocalLaunchStrategy,
+  type ProcessLaunchStrategy,
+} from "../../devcontainer/launch-strategy.js";
 import { terminateWithTreeKill } from "../../../utils/tree-kill.js";
 
 /** Default wall-clock timeout for control-plane / short RPC calls. */
@@ -66,17 +68,11 @@ function spawnJsonlRpcProcess(
   launch: JsonlRpcLaunch,
   launchStrategy?: ProcessLaunchStrategy,
 ): ChildProcessWithoutNullStreams {
-  const child = launchStrategy
-    ? launchStrategy.spawn(launch.command, launch.args, {
-        cwd: launch.cwd,
-        envOverlay: launch.env,
-        stdio: ["pipe", "pipe", "pipe"],
-      })
-    : spawnProcess(launch.command, launch.args, {
-        cwd: launch.cwd,
-        envOverlay: launch.env,
-        stdio: ["pipe", "pipe", "pipe"],
-      });
+  const child = (launchStrategy ?? new LocalLaunchStrategy()).spawn(launch.command, launch.args, {
+    cwd: launch.cwd,
+    envOverlay: launch.env,
+    stdio: ["pipe", "pipe", "pipe"],
+  });
   assertChildWithPipes(child);
   return child;
 }

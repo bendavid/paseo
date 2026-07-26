@@ -283,6 +283,7 @@ const CLAUDE_CAPABILITIES: AgentCapabilityFlags = {
   supportsRewindConversation: true,
   supportsRewindFiles: true,
   supportsRewindBoth: true,
+  supportsIsolatedLaunch: true,
 };
 
 const DEFAULT_MODES: AgentMode[] = [
@@ -1610,10 +1611,16 @@ export class ClaudeAgentClient implements AgentClient {
   }
 }
 
+/**
+ * The command name Claude Code installs on PATH. Container sessions launch
+ * this name and let the image's PATH resolve it.
+ */
+const CLAUDE_CONTAINER_COMMAND = "claude";
+
 async function resolveClaudeBinary(runtimeSettings?: ProviderRuntimeSettings): Promise<string> {
   const launch = await resolveProviderLaunch({
     commandConfig: runtimeSettings?.command,
-    defaultBinary: "claude",
+    defaultBinary: CLAUDE_CONTAINER_COMMAND,
   });
   const availability = await checkProviderLaunchAvailable(launch);
   if (availability.available) {
@@ -2994,6 +3001,18 @@ class ClaudeAgentSession implements AgentSession {
     });
   }
 
+  /**
+   * Which `claude` the SDK should launch. Host sessions get the binary
+   * resolved against the daemon's PATH; container sessions get the bare
+   * command name so it resolves on the container's PATH instead — a host path
+   * (or the daemon's own node) does not exist inside the image. A bare name
+   * has no JS extension, so the SDK treats it as a native executable and
+   * passes only CLI flags, which is exactly what exec-ing it needs.
+   */
+  private async resolveClaudeExecutable(): Promise<string> {
+    return this.launchStrategy?.isIsolated ? CLAUDE_CONTAINER_COMMAND : this.resolveBinary();
+  }
+
   private async buildOptions(): Promise<ClaudeOptions> {
     const { thinking, effort, ultracode } = this.resolveThinkingConfig();
     const appendedSystemPrompt = this.buildAppendedSystemPrompt();
@@ -3002,7 +3021,7 @@ class ClaudeAgentSession implements AgentSession {
     const sdkEnv = this.buildSdkEnv(extraClaudeOptions);
     assertClaudeAutoModeEligible(this.currentMode, sdkEnv);
 
-    const claudeBinary = await this.resolveBinary();
+    const claudeBinary = await this.resolveClaudeExecutable();
     this.logger.debug(
       {
         claudeBinary,

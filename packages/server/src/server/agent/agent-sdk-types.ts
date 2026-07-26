@@ -174,6 +174,13 @@ export interface AgentCapabilityFlags {
   supportsDynamicModes: boolean;
   supportsMcpServers: boolean;
   supportsNativePaseoTools?: boolean;
+  /**
+   * Whether this provider honors the workspace launch strategy — i.e. spawns
+   * its processes inside the workspace's container instead of on the host.
+   * Providers without it are refused on container workspaces rather than
+   * silently running outside the container.
+   */
+  supportsIsolatedLaunch?: boolean;
   supportsReasoningStream: boolean;
   supportsToolInvocations: boolean;
   supportsRewindConversation?: boolean;

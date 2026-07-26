@@ -493,6 +493,7 @@ function withOmpCapabilities(): AgentCapabilityFlags {
     ...OMP_CORE_CAPABILITIES,
     supportsMcpServers: false,
     supportsNativePaseoTools: true,
+    supportsIsolatedLaunch: true,
   };
 }
 

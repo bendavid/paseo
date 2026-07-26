@@ -106,8 +106,10 @@ import {
   buildStringCommandShellInvocation,
   createStringCommandShellEnvOverlay,
 } from "../../../utils/string-command-shell.js";
-import { spawnProcess } from "../../../utils/spawn.js";
-import type { ProcessLaunchStrategy } from "../../devcontainer/launch-strategy.js";
+import {
+  LocalLaunchStrategy,
+  type ProcessLaunchStrategy,
+} from "../../devcontainer/launch-strategy.js";
 import {
   type DiagnosticEntry,
   toDiagnosticErrorMessage,
@@ -228,6 +230,7 @@ export const DEFAULT_ACP_CAPABILITIES: AgentCapabilityFlags = {
   supportsRewindConversation: false,
   supportsRewindFiles: false,
   supportsRewindBoth: false,
+  supportsIsolatedLaunch: true,
 };
 
 const BASE_ACP_CLIENT_CAPABILITIES: ACPClientCapabilities = {
@@ -259,6 +262,8 @@ export function buildACPClientCapabilities(
 // sign-in URL in the browser) when probing an ACP agent for models/modes.
 // NO_BROWSER is honored by Gemini CLI; other ACP agents ignore it.
 const PROBE_ENV: Record<string, string> = { NO_BROWSER: "true" };
+/** Host spawning is just the local strategy — no need for a parallel branch. */
+const LOCAL_LAUNCH_STRATEGY = new LocalLaunchStrategy();
 const ACP_CATALOG_TIMEOUT_MS = 60_000;
 const ACP_DIAGNOSTIC_PHASE_TIMEOUT_MS = 20_000;
 
@@ -1009,22 +1014,18 @@ export class ACPAgentClient implements AgentClient {
     launchEnv?: Record<string, string>,
     launchStrategy?: ProcessLaunchStrategy,
   ): Promise<ACPProcessTransport> {
-    const { command, args } = await this.resolveLaunchCommand();
+    const { command, args } = await this.resolveLaunchCommand({
+      isolated: launchStrategy?.isIsolated ?? false,
+    });
     const envSpec = createProviderEnvSpec({
       runtimeSettings: this.runtimeSettings,
       overlays: [launchEnv],
     });
-    const child = launchStrategy
-      ? launchStrategy.spawn(command, args, {
-          cwd: process.cwd(),
-          ...envSpec,
-          stdio: ["pipe", "pipe", "pipe"],
-        })
-      : spawnProcess(command, args, {
-          cwd: process.cwd(),
-          ...envSpec,
-          stdio: ["pipe", "pipe", "pipe"],
-        });
+    const child = (launchStrategy ?? LOCAL_LAUNCH_STRATEGY).spawn(command, args, {
+      cwd: process.cwd(),
+      ...envSpec,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
     assertChildWithPipes(child);
 
     const stderrChunks: string[] = [];
@@ -1242,14 +1243,22 @@ export class ACPAgentClient implements AgentClient {
     }
   }
 
-  protected async resolveLaunchCommand(): Promise<{ command: string; args: string[] }> {
+  protected async resolveLaunchCommand(options?: {
+    isolated?: boolean;
+  }): Promise<{ command: string; args: string[] }> {
     const prefix = await resolveProviderLaunch({
       commandConfig: this.runtimeSettings?.command,
       defaultBinary: this.defaultCommand[0],
     });
-    const availability = await checkProviderLaunchAvailable(prefix);
-    if (!availability.available) {
-      throw new Error(`${this.provider} command '${this.defaultCommand[0]}' not found`);
+    // An isolated launch resolves the command on the container's PATH, so
+    // checking the host's would reject a perfectly good container tool (and
+    // accept a host one the container cannot run). A missing command surfaces
+    // as an exec failure with the runtime's own error.
+    if (!options?.isolated) {
+      const availability = await checkProviderLaunchAvailable(prefix);
+      if (!availability.available) {
+        throw new Error(`${this.provider} command '${this.defaultCommand[0]}' not found`);
+      }
     }
     return {
       command: prefix.command,
@@ -2244,15 +2253,21 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     const terminalCommand = resolveTerminalCommand(params.command, params.args);
     const commandEnvOverlays =
       terminalCommand.shell === false ? [env, createStringCommandShellEnvOverlay()] : [env];
-    const child = spawnProcess(terminalCommand.command, terminalCommand.args, {
-      cwd: params.cwd ?? this.config.cwd,
-      ...createProviderEnvSpec({
-        runtimeSettings: this.runtimeSettings,
-        overlays: commandEnvOverlays,
-      }),
-      shell: terminalCommand.shell,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    // The agent asks for these commands to run in its own workspace, so they
+    // belong wherever the agent itself is running.
+    const child = (this.launchStrategy ?? LOCAL_LAUNCH_STRATEGY).spawn(
+      terminalCommand.command,
+      terminalCommand.args,
+      {
+        cwd: params.cwd ?? this.config.cwd,
+        ...createProviderEnvSpec({
+          runtimeSettings: this.runtimeSettings,
+          overlays: commandEnvOverlays,
+        }),
+        shell: terminalCommand.shell,
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
 
     let resolveExit!: (exit: TerminalExit) => void;
     let rejectExit!: (error: Error) => void;
@@ -2330,9 +2345,13 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       commandConfig: this.runtimeSettings?.command,
       defaultBinary: this.defaultCommand[0],
     });
-    const availability = await checkProviderLaunchAvailable(prefix);
-    if (!availability.available) {
-      throw new Error(`${this.provider} command '${this.defaultCommand[0]}' not found`);
+    // Isolated launches resolve the command on the container's PATH — see
+    // ACPAgentClient.resolveLaunchCommand.
+    if (!this.launchStrategy?.isIsolated) {
+      const availability = await checkProviderLaunchAvailable(prefix);
+      if (!availability.available) {
+        throw new Error(`${this.provider} command '${this.defaultCommand[0]}' not found`);
+      }
     }
 
     const command = prefix.command;
@@ -2341,17 +2360,11 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       runtimeSettings: this.runtimeSettings,
       overlays: [this.launchEnv],
     });
-    const child = this.launchStrategy
-      ? this.launchStrategy.spawn(command, args, {
-          cwd: this.config.cwd,
-          envOverlay: envSpec.envOverlay,
-          stdio: ["pipe", "pipe", "pipe"],
-        })
-      : spawnProcess(command, args, {
-          cwd: this.config.cwd,
-          ...envSpec,
-          stdio: ["pipe", "pipe", "pipe"],
-        });
+    const child = (this.launchStrategy ?? LOCAL_LAUNCH_STRATEGY).spawn(command, args, {
+      cwd: this.config.cwd,
+      ...envSpec,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
     assertChildWithPipes(child);
 
     const stderrChunks: string[] = [];

@@ -375,10 +375,12 @@ export class ProviderCatalogSession {
     msg: Extract<SessionInboundMessage, { type: "refresh_providers_snapshot_request" }>,
   ): Promise<void> {
     if (msg.cwd) {
+      // msg.containerBackend is ignored: a refresh runs in whatever the
+      // workspace at this cwd uses. The new-workspace screen's container probe
+      // has its own RPC and carries its results back directly.
       await this.providerSnapshotManager.refreshSnapshotForCwd({
         cwd: expandTilde(msg.cwd),
         providers: msg.providers,
-        ...(msg.containerBackend ? { containerBackend: msg.containerBackend } : {}),
       });
     } else {
       await this.providerSnapshotManager.refreshSettingsSnapshot({

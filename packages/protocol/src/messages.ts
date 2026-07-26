@@ -1304,10 +1304,10 @@ export const RefreshProvidersSnapshotRequestMessageSchema = z.object({
   type: z.literal("refresh_providers_snapshot_request"),
   cwd: z.string().optional(),
   providers: z.array(AgentProviderSchema).optional(),
-  // COMPAT(devContainers): added in v0.2.0. Overrides the workspace's
-  // containerBackend for this refresh — used by the new-workspace screen
-  // where the workspace doesn't exist yet. Absent means use the workspace's
-  // persisted containerBackend (or null for global scope / host).
+  // COMPAT(devContainers): added in v0.2.0, unused since the probe carries its
+  // own results in container.probe.response. Still parsed so a client that
+  // sends it keeps working; the daemon refreshes with the workspace's own
+  // backend regardless.
   containerBackend: z.string().nullable().optional(),
   requestId: z.string(),
 });
@@ -2529,12 +2529,34 @@ export const ContainerProbeRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const ContainerProbeCancelRequestSchema = z.object({
+  type: z.literal("container.probe.cancel.request"),
+  // The requestId of the probe to cancel.
+  requestId: z.string(),
+});
+
+export const ContainerProbeProgressNotificationSchema = z.object({
+  type: z.literal("container.probe.progress"),
+  payload: z.object({
+    requestId: z.string(),
+    // One line of build/start output, most recent last.
+    line: z.string(),
+  }),
+});
+
 export const ContainerProbeResponseSchema = z.object({
   type: z.literal("container.probe.response"),
   payload: z.object({
     requestId: z.string(),
     success: z.boolean(),
     error: z.string().nullable(),
+    // Whether the probe was cancelled (superseded, dismissed, or disconnected)
+    // rather than failing. Absent on daemons that predate cancellation.
+    cancelled: z.boolean().optional().default(false),
+    // Provider entries as probed inside the container. The probe container is
+    // gone by the time this arrives, so these results are the only ones the
+    // client will get — it must not follow up with another refresh.
+    entries: z.array(ProviderSnapshotEntrySchema).optional(),
   }),
 });
 
@@ -2707,6 +2729,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ContainerRebuildRequestSchema,
   ContainerAvailabilityRequestSchema,
   ContainerProbeRequestSchema,
+  ContainerProbeCancelRequestSchema,
 ]);
 
 export type SessionInboundMessage = z.infer<typeof SessionInboundMessageSchema>;
@@ -5476,6 +5499,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ContainerRebuildResponseSchema,
   ContainerAvailabilityResponseSchema,
   ContainerProbeResponseSchema,
+  ContainerProbeProgressNotificationSchema,
   ContainerConfigChangedNotificationSchema,
 ]);
 
@@ -5910,7 +5934,11 @@ export type ContainerRebuildResponse = z.infer<typeof ContainerRebuildResponseSc
 export type ContainerAvailabilityRequest = z.infer<typeof ContainerAvailabilityRequestSchema>;
 export type ContainerAvailabilityResponse = z.infer<typeof ContainerAvailabilityResponseSchema>;
 export type ContainerProbeRequest = z.infer<typeof ContainerProbeRequestSchema>;
+export type ContainerProbeCancelRequest = z.infer<typeof ContainerProbeCancelRequestSchema>;
 export type ContainerProbeResponse = z.infer<typeof ContainerProbeResponseSchema>;
+export type ContainerProbeProgressNotification = z.infer<
+  typeof ContainerProbeProgressNotificationSchema
+>;
 export type ContainerConfigChangedNotification = z.infer<
   typeof ContainerConfigChangedNotificationSchema
 >;

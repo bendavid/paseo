@@ -7,8 +7,13 @@ import {
   type ProviderRuntimeSettings,
 } from "../../provider-launch-config.js";
 import { buildSelfNodeCommand } from "../../../paseo-env.js";
-import { spawnProcess } from "../../../../utils/spawn.js";
-import type { ProcessLaunchStrategy } from "../../../devcontainer/launch-strategy.js";
+import {
+  LocalLaunchStrategy,
+  type ProcessLaunchStrategy,
+} from "../../../devcontainer/launch-strategy.js";
+
+/** Host spawning is just the local strategy — no need for a parallel branch. */
+const LOCAL_LAUNCH_STRATEGY = new LocalLaunchStrategy();
 
 // Keep the raw SDK query import in this module only. Claude process launch behavior
 // must stay shared between production and tests so Windows .cmd/.bat handling cannot
@@ -70,48 +75,40 @@ function applyRuntimeSettingsToClaudeOptions(
       // PATH lookup failures in the managed runtime bundle.
       // When the SDK passes a native binary path (from pathToClaudeCodeExecutable)
       // or the user overrides the command via runtime settings, use that directly.
-      const isDefaultRuntime = resolved.command === "node" || resolved.command === "bun";
+      // Isolated launches run the container's own `claude` off its PATH
+      // (buildOptions resolves the executable to a bare name), so the daemon's
+      // node and the host-resolved SDK entrypoint must stay out of it.
+      const isDefaultRuntime =
+        !launchStrategy?.isIsolated && (resolved.command === "node" || resolved.command === "bun");
       const providerEnvSpec = createProviderEnvSpec({
         baseEnv: spawnOptions.env,
         runtimeSettings,
         overlays: [launchEnv],
       });
-      const providerEnv = createProviderEnv({
-        baseEnv: spawnOptions.env,
-        runtimeSettings,
-        overlays: [launchEnv],
-      });
       const selfNodeCommand = isDefaultRuntime
-        ? buildSelfNodeCommand(resolved.args, providerEnv)
+        ? buildSelfNodeCommand(
+            resolved.args,
+            createProviderEnv({
+              baseEnv: spawnOptions.env,
+              runtimeSettings,
+              overlays: [launchEnv],
+            }),
+          )
         : null;
       const command = selfNodeCommand?.command ?? resolved.command;
       const args = selfNodeCommand?.args ?? resolved.args;
-      const child = launchStrategy
-        ? launchStrategy.spawn(command, args, {
-            cwd: spawnOptions.cwd,
-            // Merge baseEnv into envOverlay so the container process gets
-            // the SDK's env vars (API keys, entrypoint, etc.) via -e flags.
-            // The container's own env provides PATH, HOME, etc.
-            envOverlay: {
-              ...providerEnvSpec.baseEnv,
-              ...providerEnvSpec.envOverlay,
-            },
-            signal: spawnOptions.signal,
-            stdio: ["pipe", "pipe", "pipe"],
-            shell: false,
-          })
-        : spawnProcess(command, args, {
-            cwd: spawnOptions.cwd,
-            ...(selfNodeCommand
-              ? { env: selfNodeCommand.env, envMode: "internal" as const }
-              : providerEnvSpec),
-            signal: spawnOptions.signal,
-            stdio: ["pipe", "pipe", "pipe"],
-            // Bypass cmd.exe on Windows: the SDK passes --mcp-config with inline JSON
-            // containing double quotes, which cmd.exe mangles (strips quotes, breaks parsing).
-            // The command is always a resolved binary path, so shell routing is unnecessary.
-            shell: false,
-          });
+      const child = (launchStrategy ?? LOCAL_LAUNCH_STRATEGY).spawn(command, args, {
+        cwd: spawnOptions.cwd,
+        ...(selfNodeCommand
+          ? { env: selfNodeCommand.env, envMode: "internal" as const }
+          : providerEnvSpec),
+        signal: spawnOptions.signal,
+        stdio: ["pipe", "pipe", "pipe"],
+        // Bypass cmd.exe on Windows: the SDK passes --mcp-config with inline JSON
+        // containing double quotes, which cmd.exe mangles (strips quotes, breaks parsing).
+        // The command is always a resolved binary path, so shell routing is unnecessary.
+        shell: false,
+      });
       onChildProcess?.(child);
       if (typeof options.stderr === "function") {
         child.stderr?.on("data", (chunk: Buffer | string) => {

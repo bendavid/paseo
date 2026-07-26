@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 
@@ -39,6 +40,8 @@ import type { MutableDaemonConfig } from "../daemon-config-store.js";
 const DEFAULT_REFRESH_TIMEOUT_MS = 60_000;
 const DEFAULT_DIAGNOSTIC_TIMEOUT_MS = 120_000;
 const REFRESH_TIMEOUT_ENV_VAR = "PASEO_PROVIDER_REFRESH_TIMEOUT_MS";
+/** Namespace for a probe's private snapshot; never a real cwd. */
+const PROBE_SNAPSHOT_PREFIX = "\u0000probe:";
 export const GLOBAL_PROVIDER_SNAPSHOT_KEY = "paseo:global";
 
 // Provider refresh probes can be slow on cold starts (e.g. Copilot's first
@@ -94,17 +97,19 @@ export interface ProviderSnapshotManagerOptions {
   extraClients?: Partial<Record<AgentProvider, AgentClient>>;
   refreshTimeoutMs?: number;
   diagnosticTimeoutMs?: number;
-  resolveLaunchStrategy?: (
-    cwd: string,
-    containerBackendOverride?: string | null,
-  ) => Promise<ProcessLaunchStrategy | null>;
+  resolveLaunchStrategy?: (cwd: string) => Promise<ProcessLaunchStrategy | null>;
 }
 
 interface ProviderSnapshotRefreshOptions {
   cwd: string;
   providers?: AgentProvider[];
-  /** Overrides the workspace's containerBackend for this refresh. */
-  containerBackend?: string | null;
+}
+
+export interface ProviderSnapshotProbeOptions {
+  cwd: string;
+  /** Run every provider probe inside this environment. */
+  launchStrategy: ProcessLaunchStrategy;
+  providers?: AgentProvider[];
 }
 
 interface ProviderSnapshotWarmUpOptions {
@@ -165,8 +170,8 @@ interface ProviderLoadOptions {
   providers: AgentProvider[];
   catalogScope: ProviderCatalogScope;
   force: boolean;
-  /** Overrides the workspace's containerBackend for this load. */
-  containerBackend?: string | null;
+  /** Run the probes in this environment instead of resolving one per cwd. */
+  launchStrategy?: ProcessLaunchStrategy;
 }
 interface ProviderLoad {
   promise: Promise<void>;
@@ -186,10 +191,7 @@ export class ProviderSnapshotManager {
   private destroyed = false;
   private readonly refreshTimeoutMs: number;
   private readonly diagnosticTimeoutMs: number;
-  private readonly resolveLaunchStrategy?: (
-    cwd: string,
-    containerBackendOverride?: string | null,
-  ) => Promise<ProcessLaunchStrategy | null>;
+  private readonly resolveLaunchStrategy?: (cwd: string) => Promise<ProcessLaunchStrategy | null>;
   private readonly logger: Logger;
   private readonly workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">;
   private readonly managedProcesses?: ManagedProcessRegistry;
@@ -231,11 +233,40 @@ export class ProviderSnapshotManager {
     const providers = this.resolveRefreshProviders(options.providers);
     this.resetSnapshotToLoading(snapshotCwd, providers, { preserveExisting: false });
     this.emitChange(snapshotCwd);
-    await this.refreshProviders(
-      target,
-      providers ?? this.getProviderIds(),
-      options.containerBackend,
-    );
+    await this.refreshProviders(target, providers ?? this.getProviderIds());
+  }
+
+  /**
+   * Probe every provider inside a container without touching the snapshot the
+   * workspaces at this cwd share. The results are returned to the caller — the
+   * probe container is torn down straight after, so nothing that arrives later
+   * could reproduce them.
+   */
+  async probeSnapshotForCwd(
+    options: ProviderSnapshotProbeOptions,
+  ): Promise<ProviderSnapshotEntry[]> {
+    const cwd = resolveSnapshotCwd(options.cwd);
+    // A private snapshot key keeps the probe's loading states, results and
+    // change events out of the shared store.
+    const target: ProviderSnapshotTarget = {
+      snapshotCwd: `${PROBE_SNAPSHOT_PREFIX}${randomUUID()}:${cwd}`,
+      catalogScope: { scope: "workspace", cwd },
+    };
+    const providers = this.resolveRefreshProviders(options.providers) ?? this.getProviderIds();
+    try {
+      this.resetSnapshotToLoading(target.snapshotCwd, providers, { preserveExisting: false });
+      await this.loadProviders({
+        snapshotCwd: target.snapshotCwd,
+        catalogScope: target.catalogScope,
+        providers,
+        force: true,
+        launchStrategy: options.launchStrategy,
+      });
+      return this.getSnapshotForTarget(target);
+    } finally {
+      this.snapshots.delete(target.snapshotCwd);
+      this.providerLoads.delete(target.snapshotCwd);
+    }
   }
 
   async refreshSettingsSnapshot(
@@ -651,14 +682,12 @@ export class ProviderSnapshotManager {
   private async refreshProviders(
     target: ProviderSnapshotTarget,
     providers: AgentProvider[],
-    containerBackend?: string | null,
   ): Promise<void> {
     await this.loadProviders({
       snapshotCwd: target.snapshotCwd,
       catalogScope: target.catalogScope,
       providers,
       force: true,
-      ...(containerBackend ? { containerBackend } : {}),
     });
   }
   private resolveProvidersToWarm(cwd: string, providers?: AgentProvider[]): AgentProvider[] {
@@ -752,7 +781,7 @@ export class ProviderSnapshotManager {
           definition,
           load,
           force: options.force,
-          containerBackend: options.containerBackend,
+          launchStrategy: options.launchStrategy,
         }),
       )
       .finally(() => {
@@ -774,7 +803,7 @@ export class ProviderSnapshotManager {
     definition: ProviderDefinition;
     load: ProviderLoad;
     force: boolean;
-    containerBackend?: string | null;
+    launchStrategy?: ProcessLaunchStrategy;
   }): Promise<void> {
     const { snapshotCwd, catalogScope, provider, definition, load, force } = options;
     const snapshot = this.getOrCreateSnapshot(snapshotCwd);
@@ -801,22 +830,28 @@ export class ProviderSnapshotManager {
       }
 
       const client = this.ensureClient(provider, definition);
-      const available = await withTimeout(
-        client.isAvailable(),
-        this.refreshTimeoutMs,
-        `Timed out checking ${definition.label} availability after ${this.refreshTimeoutMs}ms`,
-      );
-      if (!available) {
-        setEntry({ ...base, status: "unavailable", enabled: true });
-        return;
-      }
-
       const catalogOptions = createFetchCatalogOptions(catalogScope, force);
       const launchStrategy =
-        catalogOptions.scope === "workspace" && this.resolveLaunchStrategy
-          ? ((await this.resolveLaunchStrategy(catalogOptions.cwd, options.containerBackend)) ??
-            undefined)
-          : undefined;
+        options.launchStrategy ??
+        (catalogOptions.scope === "workspace" && this.resolveLaunchStrategy
+          ? ((await this.resolveLaunchStrategy(catalogOptions.cwd)) ?? undefined)
+          : undefined);
+      // isAvailable() inspects the host, so for a container workspace it answers
+      // a question about the wrong machine: a tool installed only in the image
+      // would read as missing, and a host-only tool as present. Fetching the
+      // catalog inside the container is the honest test — it succeeds exactly
+      // when the tool is there and usable.
+      if (!launchStrategy?.isIsolated) {
+        const available = await withTimeout(
+          client.isAvailable(),
+          this.refreshTimeoutMs,
+          `Timed out checking ${definition.label} availability after ${this.refreshTimeoutMs}ms`,
+        );
+        if (!available) {
+          setEntry({ ...base, status: "unavailable", enabled: true });
+          return;
+        }
+      }
       const catalog = await withTimeout(
         definition.fetchCatalog(
           catalogOptions.scope === "workspace"

@@ -441,6 +441,7 @@ type ListProviderModelsPayload = ListProviderModelsResponseMessage["payload"];
 type ListProviderModesPayload = ListProviderModesResponseMessage["payload"];
 type ListAvailableProvidersPayload = ListAvailableProvidersResponse["payload"];
 type GetProvidersSnapshotPayload = GetProvidersSnapshotResponseMessage["payload"];
+type ProviderSnapshotEntry = GetProvidersSnapshotPayload["entries"][number];
 type RefreshProvidersSnapshotPayload = RefreshProvidersSnapshotResponseMessage["payload"];
 type ProviderDiagnosticPayload = ProviderDiagnosticResponseMessage["payload"];
 type ProviderUsageListPayload = ProviderUsageListResponseMessage["payload"];
@@ -955,6 +956,8 @@ function toTimeoutError(error: unknown, label: string, timeoutMs: number): Error
 const DEFAULT_RECONNECT_BASE_DELAY_MS = 1500;
 const DEFAULT_RECONNECT_MAX_DELAY_MS = 30000;
 const DEFAULT_SESSION_RPC_TIMEOUT_MS = 60_000;
+/** A first container build pulls an image and runs lifecycle scripts. */
+const CONTAINER_PROBE_TIMEOUT_MS = 600_000;
 const DEFAULT_CONNECT_TIMEOUT_MS = 15_000;
 const DEFAULT_LIVENESS_TIMEOUT_MS = 5000;
 const LIVENESS_HEARTBEAT_INTERVAL_MS = 10_000;
@@ -5288,17 +5291,68 @@ export class DaemonClient {
     });
   }
 
+  /**
+   * Probe a directory's container for the providers it has. The daemon builds a
+   * throwaway container, so this can take minutes on a first build — progress
+   * lines arrive through `onProgress`, and aborting the signal tells the daemon
+   * to stop building rather than leaving it to finish for nobody.
+   *
+   * The returned entries are the whole answer: the probe container is gone by
+   * the time they arrive, so a follow-up snapshot refresh would run on the host
+   * and report the wrong thing.
+   */
   async probeContainer(
     cwd: string,
     containerBackend: string,
-    requestId?: string,
-  ): Promise<{ success: boolean; error: string | null }> {
-    const payload = await this.sendCorrelatedSessionRequest({
-      requestId,
-      message: { type: "container.probe.request", cwd, containerBackend },
-      responseType: "container.probe.response",
-    });
-    return { success: payload.success, error: payload.error };
+    options?: {
+      requestId?: string;
+      onProgress?: (line: string) => void;
+      signal?: AbortSignal;
+      timeout?: number;
+    },
+  ): Promise<{
+    success: boolean;
+    cancelled: boolean;
+    error: string | null;
+    entries: ProviderSnapshotEntry[];
+  }> {
+    const requestId = this.createRequestId(options?.requestId);
+    const unsubscribeProgress = options?.onProgress
+      ? this.on("container.probe.progress", (message) => {
+          if (
+            message.type === "container.probe.progress" &&
+            message.payload.requestId === requestId
+          ) {
+            options.onProgress?.(message.payload.line);
+          }
+        })
+      : null;
+    const cancel = (): void => {
+      try {
+        this.sendSessionMessageStrict({ type: "container.probe.cancel.request", requestId });
+      } catch {
+        // Disconnected — the daemon cancels this session's probes on its own.
+      }
+    };
+    options?.signal?.addEventListener("abort", cancel, { once: true });
+
+    try {
+      const payload = await this.sendCorrelatedSessionRequest({
+        requestId,
+        message: { type: "container.probe.request", cwd, containerBackend },
+        responseType: "container.probe.response",
+        timeout: options?.timeout ?? CONTAINER_PROBE_TIMEOUT_MS,
+      });
+      return {
+        success: payload.success,
+        cancelled: payload.cancelled ?? false,
+        error: payload.error,
+        entries: payload.entries ?? [],
+      };
+    } finally {
+      unsubscribeProgress?.();
+      options?.signal?.removeEventListener("abort", cancel);
+    }
   }
 
   onContainerConfigChanged(handler: (workspaceId: string) => void): () => void {

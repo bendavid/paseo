@@ -1280,6 +1280,8 @@ export const ar: TranslationResources = {
       devcontainer: "حاوية التطوير",
       dockerUnavailable: "Docker غير متاح",
       noDevContainerConfig: "لم يتم العثور على devcontainer.json في هذا الدليل",
+      probing: "{{backend}} — جارٍ التشغيل…",
+      probeFailed: "تعذّر فحص الحاوية: {{error}}",
     },
   },
   onboarding: {

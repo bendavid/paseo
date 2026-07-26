@@ -35,7 +35,10 @@ import {
   type ProviderCatalog,
 } from "../agent-sdk-types.js";
 import { importSessionFromPersistence } from "../provider-session-import.js";
-import type { ProcessLaunchStrategy } from "../../devcontainer/launch-strategy.js";
+import {
+  LocalLaunchStrategy,
+  type ProcessLaunchStrategy,
+} from "../../devcontainer/launch-strategy.js";
 import type { Logger } from "pino";
 
 import type { ChildProcess, ChildProcessWithoutNullStreams } from "node:child_process";
@@ -66,7 +69,6 @@ import {
   probeExecutable,
 } from "../../../executable-resolution/executable-resolution.js";
 import { createPathEquivalenceMatcher } from "../../../utils/path.js";
-import { spawnProcess } from "../../../utils/spawn.js";
 import { extractCodexTerminalSessionId, nonEmptyString } from "./tool-call-mapper-utils.js";
 import { buildCodexFeatures, codexModelSupportsFastMode } from "./codex-feature-definitions.js";
 import {
@@ -128,6 +130,8 @@ function isCodexAlreadyUnarchivedError(error: unknown, threadId: string): boolea
 const TURN_START_TIMEOUT_MS = 90 * 1000;
 const INTERRUPT_TIMEOUT_MS = 2_000;
 const CODEX_PROVIDER = "codex" as const;
+/** Host spawning is just the local strategy — no need for a parallel branch. */
+const LOCAL_LAUNCH_STRATEGY = new LocalLaunchStrategy();
 // Codex treats most app-server client names as the model-request originator.
 // This reserved Codex name is non-originating, so requests keep Codex's default
 // CLI identity instead of showing up as Paseo in provider usage logs.
@@ -210,6 +214,7 @@ const CODEX_APP_SERVER_CAPABILITIES: AgentCapabilityFlags = {
   supportsRewindConversation: true,
   supportsRewindFiles: false,
   supportsRewindBoth: false,
+  supportsIsolatedLaunch: true,
 };
 
 const CODEX_MODES: AgentMode[] = [
@@ -493,11 +498,20 @@ export async function findDefaultCodexBinary(): Promise<string | null> {
   return (await findExecutable("codex")) ?? (await findCodexMicrosoftStoreBinary());
 }
 
-async function resolveCodexLaunchPrefix(runtimeSettings?: ProviderRuntimeSettings): Promise<{
+async function resolveCodexLaunchPrefix(
+  runtimeSettings?: ProviderRuntimeSettings,
+  options?: { isolated?: boolean },
+): Promise<{
   command: string;
   args: string[];
 }> {
   const launch = await resolveCodexLaunch(runtimeSettings);
+  // An isolated launch runs the container's codex off the container's PATH:
+  // the host's resolved path does not exist inside the image, and the host's
+  // availability answers a question about the wrong machine.
+  if (options?.isolated) {
+    return { command: launch.command, args: launch.args };
+  }
   const availability = await checkCodexLaunchAvailable(launch);
   if (!availability.available) {
     throw new Error(
@@ -6279,7 +6293,9 @@ export class CodexAppServerAgentClient implements AgentClient {
     launchEnv?: Record<string, string>,
     options?: { goalsEnabled?: boolean; agentId?: string; launchStrategy?: ProcessLaunchStrategy },
   ): Promise<ChildProcessWithoutNullStreams> {
-    const launchPrefix = await resolveCodexLaunchPrefix(this.runtimeSettings);
+    const launchPrefix = await resolveCodexLaunchPrefix(this.runtimeSettings, {
+      isolated: options?.launchStrategy?.isIsolated ?? false,
+    });
     const args = [...launchPrefix.args, "app-server"];
     if (options?.goalsEnabled) {
       args.push("--enable", "goals");
@@ -6293,23 +6309,18 @@ export class CodexAppServerAgentClient implements AgentClient {
       },
       "provider.codex.spawn",
     );
-    const child = options?.launchStrategy
-      ? options.launchStrategy.spawn(launchPrefix.command, args, {
-          detached: process.platform !== "win32",
-          stdio: ["pipe", "pipe", "pipe"],
-          ...createProviderEnvSpec({
-            runtimeSettings: this.runtimeSettings,
-            overlays: [launchEnv],
-          }),
-        })
-      : spawnProcess(launchPrefix.command, args, {
-          detached: process.platform !== "win32",
-          stdio: ["pipe", "pipe", "pipe"],
-          ...createProviderEnvSpec({
-            runtimeSettings: this.runtimeSettings,
-            overlays: [launchEnv],
-          }),
-        });
+    const child = (options?.launchStrategy ?? LOCAL_LAUNCH_STRATEGY).spawn(
+      launchPrefix.command,
+      args,
+      {
+        detached: process.platform !== "win32",
+        stdio: ["pipe", "pipe", "pipe"],
+        ...createProviderEnvSpec({
+          runtimeSettings: this.runtimeSettings,
+          overlays: [launchEnv],
+        }),
+      },
+    );
     assertChildWithPipes(child);
     return child;
   }

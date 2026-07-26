@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 /**
@@ -40,7 +40,9 @@ export function discoverDevContainerConfig(workspaceFolder: string): DevContaine
   const devcontainerDir = join(cwd, ".devcontainer");
   if (existsSync(devcontainerDir)) {
     try {
-      const entries = readdirSync(devcontainerDir);
+      // Sorted so the choice between sibling configs is stable rather than
+      // dependent on filesystem enumeration order.
+      const entries = readdirSync(devcontainerDir).sort();
       for (const entry of entries) {
         if (entry === "devcontainer.json") continue; // already checked in step 1
         const candidate = join(devcontainerDir, entry, "devcontainer.json");
@@ -55,6 +57,3 @@ export function discoverDevContainerConfig(workspaceFolder: string): DevContaine
 
   return null;
 }
-
-// Import here to avoid circular dependency concerns and keep the module self-contained.
-import { readdirSync } from "node:fs";

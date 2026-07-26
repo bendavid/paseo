@@ -128,7 +128,6 @@ import type { RequestedSpeechProviders } from "./speech/speech-types.js";
 import { createSpeechService } from "./speech/speech-runtime.js";
 import { createDevContainerBackend, createLaunchStrategyRegistry } from "./devcontainer/index.js";
 import { createContainerBackendRegistry } from "./devcontainer/container-backend-registry.js";
-import { runGitCommand, type GitCommandOptions } from "../utils/run-git-command.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import { AgentStorage } from "./agent/agent-storage.js";
 import { attachAgentStoragePersistence } from "./persistence-hooks.js";
@@ -599,6 +598,12 @@ export async function createPaseoDaemon(
   const devContainerAvailable = await containerBackend.isAvailable();
   if (devContainerAvailable) {
     logger.info("Isolated execution support is available (devcontainer CLI + Docker detected)");
+    // Probe containers are scratch, so any that survived a previous run belong
+    // to a probe that was killed before it could clean up. Fire-and-forget:
+    // nothing waits on garbage collection.
+    void containerBackend.removeAbandonedProbeContainers().catch((error: unknown) => {
+      logger.warn({ err: error }, "Failed to remove abandoned probe containers");
+    });
   } else {
     logger.debug("Isolated execution support is not available");
   }
@@ -813,15 +818,6 @@ export async function createPaseoDaemon(
     worktreesRoot: config.worktreesRoot,
     deps: {
       forgeOverrides: { github },
-      // Wrap runGitCommand so git operations execute inside the dev container
-      // when one is active for the workspace. The strategy is resolved from the
-      // command's cwd; worktree lifecycle operations (add/remove) always use
-      // local execution because the container may not exist yet.
-      runGitCommand: (args: string[], options: GitCommandOptions) =>
-        runGitCommand(args, {
-          ...options,
-          launchStrategy: launchStrategyRegistry.getStrategy(options.cwd),
-        }),
     },
   });
   const workspaceProvisioning = createWorkspaceProvisioningService({
@@ -839,18 +835,16 @@ export async function createPaseoDaemon(
     managedProcesses,
     isDev: config.isDev === true,
     extraClients: config.agentClients,
-    resolveLaunchStrategy: async (cwd, containerBackendOverride) => {
+    resolveLaunchStrategy: async (cwd) => {
       if (!launchStrategyRegistry) return null;
-      // Resolve the registry key: a synthetic probe key for the new-workspace
-      // screen (no workspace exists yet), or the workspaceId for an existing
-      // workspace.
-      let key: string | null;
-      if (containerBackendOverride) {
-        key = `probe:${cwd}`;
-      } else {
-        const workspaces = await workspaceRegistry?.list();
-        key = workspaces ? resolveWorkspaceIdForPath(cwd, workspaces) : null;
-      }
+      const workspaces = (await workspaceRegistry?.list()) ?? [];
+      const workspaceId = resolveWorkspaceIdForPath(cwd, workspaces);
+      // Host workspaces (and paths that belong to no workspace) run provider
+      // probes on the host, as they always have. The new-workspace screen's
+      // container probe does not come through here at all — it hands the
+      // snapshot manager the strategy for its own throwaway container.
+      const workspace = workspaces.find((entry) => entry.workspaceId === workspaceId);
+      const key = workspace?.containerBackend ? workspaceId : null;
       if (!key) return null;
       // Strict: workspace-scoped catalog refresh must use the container's
       // tool, not the host's. Throws if the container isn't running — the

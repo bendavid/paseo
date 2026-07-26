@@ -4308,6 +4308,13 @@ export class AgentManager {
       } else if (this.launchStrategyRegistry) {
         context.launchStrategy = await this.launchStrategyRegistry.awaitStrategy(cwd);
       }
+      if (context.launchStrategy?.isIsolated && !client.capabilities.supportsIsolatedLaunch) {
+        // Running it anyway would put the agent on the host while the user
+        // believes it is contained.
+        throw new Error(
+          `Provider '${client.provider}' cannot run inside a container yet. Switch this workspace to Host, or use a provider that supports containers.`,
+        );
+      }
     }
     return context;
   }
@@ -4316,7 +4323,40 @@ export class AgentManager {
     launchConfig: AgentSessionConfig,
     launchContext: AgentLaunchContext,
   ): AgentSessionConfig {
-    return launchContext.paseoTools ? stripInternalPaseoMcpServer(launchConfig) : launchConfig;
+    return launchContext.paseoTools
+      ? stripInternalPaseoMcpServer(launchConfig)
+      : this.applyLaunchStrategyToMcpConfig(launchConfig, launchContext);
+  }
+
+  /**
+   * The daemon's MCP endpoint is addressed as loopback, which inside a
+   * container means the container itself. Rewrite it to an address the agent
+   * can actually reach, and drop the server outright when there is none —
+   * an unreachable MCP server costs the agent a full tool-call timeout on
+   * every call instead of simply not being there.
+   */
+  private applyLaunchStrategyToMcpConfig(
+    launchConfig: AgentSessionConfig,
+    launchContext: AgentLaunchContext,
+  ): AgentSessionConfig {
+    const strategy = launchContext.launchStrategy;
+    const agentId = launchContext.agentId;
+    if (!strategy?.isIsolated || !this.mcpBaseUrl || !agentId) return launchConfig;
+
+    const reachableUrl = strategy.resolveDaemonUrl(this.mcpBaseUrl);
+    if (!reachableUrl) {
+      this.logger.warn(
+        { agentId, mcpBaseUrl: this.mcpBaseUrl },
+        "Paseo MCP tools are unavailable to this agent: the daemon is not reachable from the container. Bind the daemon to a non-loopback address to enable them.",
+      );
+      return stripInternalPaseoMcpServer(launchConfig);
+    }
+    return withRuntimePaseoMcpServer({
+      config: stripInternalPaseoMcpServer(launchConfig),
+      agentId,
+      mcpBaseUrl: reachableUrl,
+      mcpAuthToken: this.mcpAuthToken,
+    });
   }
 
   private async requireAvailableClient(options: { provider: AgentProvider }): Promise<AgentClient> {
