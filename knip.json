@@ -31,6 +31,8 @@
         "src/**/*.test.{ts,tsx}",
         "src/**/*.e2e.{ts,tsx}",
         "src/**/*.native.{ts,tsx}",
+        "src/pdf/webview/pdf-viewer-webview-entry.ts",
+        "src/terminal/webview/terminal-emulator-webview-entry.ts",
         "e2e/**/*.{ts,tsx}",
         "playwright.config.{ts,js}",
         "vitest.config.{ts,js}",

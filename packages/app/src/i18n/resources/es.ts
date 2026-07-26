@@ -1518,6 +1518,12 @@ export const es: TranslationResources = {
       binaryPreviewUnavailable: "Vista previa binaria no disponible",
       failedToLoad: "No se pudo cargar el archivo",
       failedToLoadPreview: "No se pudo cargar la vista previa del archivo",
+      pdf: {
+        title: "Vista previa del PDF",
+        loading: "Procesando el PDF...",
+        failed: "No se pudo procesar este PDF",
+        hostUpdateRequired: "Actualiza el host para ver PDF",
+      },
       editor: {
         fileSize: "Tamaño {{size}}",
         lines: "{{count}} líneas",

@@ -1486,6 +1486,12 @@ export const en = {
       binaryPreviewUnavailable: "Binary preview unavailable",
       failedToLoad: "Failed to load file",
       failedToLoadPreview: "Failed to load file preview",
+      pdf: {
+        title: "PDF preview",
+        loading: "Rendering PDF...",
+        failed: "Could not render this PDF",
+        hostUpdateRequired: "Update the host to preview PDFs",
+      },
       editor: {
         fileSize: "File size {{size}}",
         lines: "{{count}} lines",

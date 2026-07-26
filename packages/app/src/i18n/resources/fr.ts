@@ -1521,6 +1521,12 @@ export const fr: TranslationResources = {
       binaryPreviewUnavailable: "Aperçu binaire indisponible",
       failedToLoad: "Échec du chargement du fichier",
       failedToLoadPreview: "Échec du chargement de l'aperçu du fichier",
+      pdf: {
+        title: "Aperçu du PDF",
+        loading: "Rendu du PDF...",
+        failed: "Impossible d’afficher ce PDF",
+        hostUpdateRequired: "Mettez à jour l’hôte pour afficher les PDF",
+      },
       editor: {
         fileSize: "Taille {{size}}",
         lines: "{{count}} lignes",

@@ -1475,6 +1475,12 @@ export const ar: TranslationResources = {
       binaryPreviewUnavailable: "المعاينة الثنائية غير متاحة",
       failedToLoad: "فشل تحميل الملف",
       failedToLoadPreview: "فشل تحميل معاينة الملف",
+      pdf: {
+        title: "معاينة PDF",
+        loading: "جارٍ عرض PDF...",
+        failed: "تعذّر عرض ملف PDF هذا",
+        hostUpdateRequired: "حدّث المضيف لمعاينة ملفات PDF",
+      },
       editor: {
         fileSize: "حجم الملف {{size}}",
         lines: "{{count}} سطر",
