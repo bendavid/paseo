@@ -1025,6 +1025,7 @@ export const ru: TranslationResources = {
       label: "Изоляция",
     },
     fields: {
+      host: "Хост",
       project: "Проект",
       base: "База",
       baseNotApplicable: "Неприменимо",

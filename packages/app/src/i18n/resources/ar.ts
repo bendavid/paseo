@@ -1003,6 +1003,7 @@ export const ar: TranslationResources = {
       label: "العزل",
     },
     fields: {
+      host: "المضيف",
       project: "المشروع",
       base: "الأساس",
       baseNotApplicable: "غير قابل للتطبيق",

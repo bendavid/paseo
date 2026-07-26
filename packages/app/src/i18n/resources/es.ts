@@ -1035,6 +1035,7 @@ export const es: TranslationResources = {
       label: "Aislamiento",
     },
     fields: {
+      host: "Host",
       project: "Proyecto",
       base: "Base",
       baseNotApplicable: "No aplicable",

@@ -1013,6 +1013,7 @@ export const en = {
       label: "Isolation",
     },
     fields: {
+      host: "Host",
       project: "Project",
       base: "Base",
       baseNotApplicable: "Not applicable",

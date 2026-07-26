@@ -1034,6 +1034,7 @@ export const fr: TranslationResources = {
       label: "Isolation",
     },
     fields: {
+      host: "Hôte",
       project: "Projet",
       base: "Base",
       baseNotApplicable: "Non applicable",

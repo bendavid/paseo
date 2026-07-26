@@ -988,6 +988,7 @@ export const zhCN: TranslationResources = {
       label: "隔离",
     },
     fields: {
+      host: "主机",
       project: "项目",
       base: "基线",
       baseNotApplicable: "不适用",

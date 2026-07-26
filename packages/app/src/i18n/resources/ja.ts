@@ -1014,6 +1014,7 @@ export const ja: TranslationResources = {
       label: "分離方法",
     },
     fields: {
+      host: "ホスト",
       project: "プロジェクト",
       base: "ベース",
       baseNotApplicable: "該当なし",

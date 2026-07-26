@@ -196,9 +196,12 @@ interface PickerOptionData {
 const BRANCH_OPTION_PREFIX = "branch:";
 const PR_OPTION_PREFIX = "github-pr:";
 const PROJECT_ICON_FALLBACK_FONT_SIZE = 10;
-// Height of a single picker-trigger badge. The Base-row spacer reserves exactly
-// this so toggling Isolation to Local hides the row without shifting the form.
+// Height of a single picker-trigger badge.
 const BADGE_HEIGHT = 28;
+// A picker's caption line, plus the gap to its trigger. The Base-row spacer
+// reserves a whole field (caption + gap + badge) so toggling Isolation to Local
+// hides the row without shifting the form.
+const PICKER_LABEL_LINE_HEIGHT = 16;
 
 function RefPickerBadgeContent({
   selectedItem,
@@ -790,6 +793,25 @@ function ContainerBackendPickerTrigger({
 // controls are laid out in one horizontal row, so no per-control wrapper is used.
 function FormRow({ children }: { children: React.ReactNode }) {
   return <View style={styles.row}>{children}</View>;
+}
+
+/**
+ * Names what a picker selects. The row holds five of them and every trigger
+ * shows only its current value, so without a caption the reader has to infer
+ * which control is which from the values themselves.
+ *
+ * The caption is inset by the trigger's own horizontal padding so it lines up
+ * with the value text rather than the badge's edge.
+ */
+function PickerField({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <View style={styles.pickerField}>
+      <Text style={styles.pickerFieldLabel} numberOfLines={1}>
+        {label}
+      </Text>
+      {children}
+    </View>
+  );
 }
 
 interface WorkspaceIsolationState {
@@ -1479,7 +1501,7 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
   );
 
   const projectControl = (
-    <View>
+    <PickerField label={t("newWorkspace.fields.project")}>
       <ProjectPickerTrigger
         pickerAnchorRef={project.anchorRef}
         onPress={project.open}
@@ -1511,11 +1533,11 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
         renderOption={project.renderOption}
         footer={addProjectAction}
       />
-    </View>
+    </PickerField>
   );
 
   const hostControl = showHostControl ? (
-    <View>
+    <PickerField label={t("newWorkspace.fields.host")}>
       <HostPicker
         hosts={host.allHosts}
         value={host.selectedServerId}
@@ -1543,11 +1565,11 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
           <ChevronDown size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
         </Pressable>
       </HostPicker>
-    </View>
+    </PickerField>
   ) : null;
 
   const isolationControl = isolation.canCreateWorktree ? (
-    <View>
+    <PickerField label={t("newWorkspace.isolation.label")}>
       <IsolationPickerTrigger
         pickerAnchorRef={isolation.anchorRef}
         onPress={isolation.open}
@@ -1569,11 +1591,11 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
         anchorRef={isolation.anchorRef}
         renderOption={isolation.renderOption}
       />
-    </View>
+    </PickerField>
   ) : null;
 
   const containerBackendControl = containerBackend.canShow ? (
-    <View>
+    <PickerField label={t("workspaceSetup.containerBackend.label")}>
       <ContainerBackendPickerTrigger
         pickerAnchorRef={containerBackend.anchorRef}
         onPress={containerBackend.open}
@@ -1595,11 +1617,11 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
         anchorRef={containerBackend.anchorRef}
         renderOption={containerBackend.renderOption}
       />
-    </View>
+    </PickerField>
   ) : null;
 
   const baseControl = base.showRefPicker ? (
-    <View>
+    <PickerField label={t("newWorkspace.refPicker.title")}>
       <RefPickerTrigger
         pickerAnchorRef={base.anchorRef}
         onPress={base.open}
@@ -1627,7 +1649,7 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
         emptyText={base.emptyText}
         renderOption={base.renderOption}
       />
-    </View>
+    </PickerField>
   ) : null;
 
   return isCompact ? (
@@ -2465,7 +2487,18 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[1],
   },
   baseSpacer: {
-    height: BADGE_HEIGHT,
+    height: BADGE_HEIGHT + PICKER_LABEL_LINE_HEIGHT + theme.spacing[1],
+  },
+  pickerField: {
+    gap: theme.spacing[1],
+  },
+  pickerFieldLabel: {
+    // Matches the trigger badge's horizontal padding so the caption sits over
+    // the value text, not over the badge's edge.
+    paddingHorizontal: theme.spacing[2],
+    fontSize: theme.fontSize.xs,
+    lineHeight: PICKER_LABEL_LINE_HEIGHT,
+    color: theme.colors.foregroundMuted,
   },
   badge: {
     flexDirection: "row",

@@ -1026,6 +1026,7 @@ export const ptBR: TranslationResources = {
       label: "Isolamento",
     },
     fields: {
+      host: "Host",
       project: "Projeto",
       base: "Base",
       baseNotApplicable: "Não aplicável",
