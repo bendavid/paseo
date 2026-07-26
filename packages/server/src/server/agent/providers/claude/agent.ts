@@ -1492,7 +1492,7 @@ export class ClaudeAgentClient implements AgentClient {
       cwd: merged.cwd,
     };
     const claudeConfig = this.assertConfig(mergedConfig);
-    return new ClaudeAgentSession(claudeConfig, {
+    const session = new ClaudeAgentSession(claudeConfig, {
       defaults: this.defaults,
       runtimeSettings: this.runtimeSettings,
       handle,
@@ -1503,6 +1503,10 @@ export class ClaudeAgentClient implements AgentClient {
       queryFactory: this.queryFactory,
       resolveBinary: this.resolveBinary,
     });
+    // Before the caller can touch it: a resumed session's history is part of
+    // what it means for the session to exist.
+    await session.hydratePersistedHistory();
+    return session;
   }
 
   async fetchCatalog(_options: FetchCatalogOptions): Promise<ProviderCatalog> {
@@ -1548,7 +1552,7 @@ export class ClaudeAgentClient implements AgentClient {
     // different environment.
     const files = createLaunchFileSystem(options?.launchStrategy);
     const strategy = options?.launchStrategy;
-    const configDir = files.isRemote
+    const configDir = files.isIsolated
       ? path.join(await files.homeDir(), ".claude")
       : (process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude"));
     const sessionCwd =
@@ -1961,8 +1965,6 @@ class ClaudeAgentSession implements AgentSession {
    * agent runs in one, the host's otherwise.
    */
   private readonly transcriptFiles: LaunchFileSystem;
-  /** In-flight transcript read; streamHistory waits on it. */
-  private historyLoad: Promise<void> | null = null;
   private readonly agentId?: string;
   private readonly defaults?: { agents?: Record<string, AgentDefinition> };
   private readonly runtimeSettings?: ProviderRuntimeSettings;
@@ -2039,7 +2041,6 @@ class ClaudeAgentSession implements AgentSession {
       }
       this.claudeSessionId = handle.sessionId;
       this.persistence = handle;
-      this.loadPersistedHistory(handle.sessionId);
     } else {
       this.claudeSessionId = null;
       this.persistence = null;
@@ -2217,9 +2218,6 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
-    // The transcript read is async; without this the first stream can start
-    // before the history it is supposed to replay has landed.
-    await this.historyLoad;
     if (
       !this.historyPending ||
       (this.persistedHistory.length === 0 && this.persistedProviderSubagentEvents.length === 0)
@@ -2558,9 +2556,7 @@ class ClaudeAgentSession implements AgentSession {
       sessionId: this.claudeSessionId,
       messageId: target.messageId,
       resolveMessageId: (messageId) => this.resolveClaudeMessageId(messageId),
-      setSessionId: (sessionId) => {
-        this.rebindConversationSession(sessionId);
-      },
+      setSessionId: (sessionId) => this.rebindConversationSession(sessionId),
     });
   }
 
@@ -2643,9 +2639,6 @@ class ClaudeAgentSession implements AgentSession {
     };
     error?: string;
   }> {
-    // Rewind candidates come from the persisted transcript, which is read
-    // asynchronously (an exec into the container for an isolated session).
-    await this.historyLoad;
     if (typeof args === "string" && args.trim().length > 0) {
       const candidate = args.trim().split(/\s+/)[0] ?? "";
       if (!UUID_PATTERN.test(candidate)) {
@@ -2739,7 +2732,7 @@ class ClaudeAgentSession implements AgentSession {
     return candidates;
   }
 
-  private rebindConversationSession(sessionId: string): void {
+  private async rebindConversationSession(sessionId: string): Promise<void> {
     const oldSessionId = this.claudeSessionId;
     this.claudeSessionId = sessionId;
     this.pendingFreshSessionId = null;
@@ -2752,7 +2745,7 @@ class ClaudeAgentSession implements AgentSession {
     this.userMessageIds = [];
     this.emittedUserMessageIds.clear();
     this.rewindTurnAnchors.length = 0;
-    this.loadPersistedHistory(sessionId);
+    await this.readPersistedHistory(sessionId).catch(() => undefined);
     if (oldSessionId && oldSessionId !== sessionId) {
       this.dispatchEvents([
         {
@@ -4339,12 +4332,18 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   /**
-   * Reading the transcript is I/O against the agent's own filesystem, which for
-   * a container session means an exec into it. Kick it off and let
-   * streamHistory wait on the result rather than blocking construction.
+   * Load this session's transcript into the replayable history.
+   *
+   * Reading it is I/O — for a container session, an exec into the container
+   * (~75ms) rather than a local file read — so it cannot happen in the
+   * constructor. It happens before the session is handed to anyone instead:
+   * ClaudeAgentClient.resumeSession awaits this, and so does every path that
+   * rebinds the session id. Nothing can therefore observe the history in a
+   * half-loaded state, and no reader has to remember to await anything.
    */
-  private loadPersistedHistory(sessionId: string): void {
-    this.historyLoad = this.readPersistedHistory(sessionId).catch(() => undefined);
+  async hydratePersistedHistory(): Promise<void> {
+    if (!this.claudeSessionId) return;
+    await this.readPersistedHistory(this.claudeSessionId).catch(() => undefined);
   }
 
   private async readPersistedHistory(sessionId: string): Promise<void> {
@@ -4450,7 +4449,7 @@ class ClaudeAgentSession implements AgentSession {
     if (!cwd) return null;
     const configDir = await this.resolveTranscriptConfigDir();
     const candidates = [this.resolveTranscriptCwd(cwd)];
-    if (!this.transcriptFiles.isRemote) {
+    if (!this.transcriptFiles.isIsolated) {
       try {
         const realCwd = fs.realpathSync(cwd);
         if (realCwd !== cwd) {
@@ -4478,7 +4477,7 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private async resolveTranscriptConfigDir(): Promise<string> {
-    if (!this.transcriptFiles.isRemote) {
+    if (!this.transcriptFiles.isIsolated) {
       return process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
     }
     // The daemon's CLAUDE_CONFIG_DIR describes the host's install, not this

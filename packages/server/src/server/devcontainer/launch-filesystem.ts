@@ -17,7 +17,9 @@ import type { ProcessLaunchStrategy } from "./launch-strategy.js";
  *
  * So the reads go where the agent runs. The host implementation is plain
  * `node:fs`; the container implementation runs the equivalent POSIX commands
- * through the workspace's launch strategy.
+ * through the workspace's launch strategy. Both are local disks — what the
+ * container costs is a process spawn per operation, which is why the listing
+ * is one `find` rather than a walk plus a stat each.
  */
 
 export interface LaunchFileStat {
@@ -34,8 +36,12 @@ export interface ListFilesOptions {
 }
 
 export interface LaunchFileSystem {
-  /** Whether these paths live somewhere other than the host. */
-  readonly isRemote: boolean;
+  /**
+   * Whether these paths belong to a container rather than the host. Still a
+   * local disk either way — the difference is that reaching it costs a process
+   * spawn (~75ms) instead of a file read (~1ms).
+   */
+  readonly isIsolated: boolean;
   /** HOME as the environment defines it — the container's user, not ours. */
   homeDir(): Promise<string>;
   exists(filePath: string): Promise<boolean>;
@@ -49,14 +55,14 @@ export interface LaunchFileSystem {
 }
 
 /** Bounded so one probe can't hang an import listing indefinitely. */
-const REMOTE_COMMAND_TIMEOUT_MS = 15_000;
+const CONTAINER_COMMAND_TIMEOUT_MS = 15_000;
 
 export function createLaunchFileSystem(strategy?: ProcessLaunchStrategy | null): LaunchFileSystem {
-  return strategy?.isIsolated ? new RemoteLaunchFileSystem(strategy) : HOST_FILE_SYSTEM;
+  return strategy?.isIsolated ? new ContainerLaunchFileSystem(strategy) : HOST_FILE_SYSTEM;
 }
 
 class HostLaunchFileSystem implements LaunchFileSystem {
-  readonly isRemote = false;
+  readonly isIsolated = false;
 
   async homeDir(): Promise<string> {
     return homedir();
@@ -156,8 +162,8 @@ const HOST_FILE_SYSTEM = new HostLaunchFileSystem();
  * The same operations as POSIX commands run inside the environment. Every
  * container image has these; nothing here assumes GNU coreutils over busybox.
  */
-class RemoteLaunchFileSystem implements LaunchFileSystem {
-  readonly isRemote = true;
+class ContainerLaunchFileSystem implements LaunchFileSystem {
+  readonly isIsolated = true;
 
   private readonly strategy: ProcessLaunchStrategy;
   private home: Promise<string> | null = null;
@@ -211,7 +217,7 @@ class RemoteLaunchFileSystem implements LaunchFileSystem {
     try {
       const child = this.strategy.spawn("sh", ["-c", script], {
         stdio: ["ignore", "pipe", "ignore"],
-        signal: AbortSignal.timeout(REMOTE_COMMAND_TIMEOUT_MS),
+        signal: AbortSignal.timeout(CONTAINER_COMMAND_TIMEOUT_MS),
       });
       let stdout = "";
       child.stdout?.on("data", (chunk: Buffer) => {

@@ -70,7 +70,7 @@ describe("host launch filesystem", () => {
   it("uses the host filesystem for a host workspace", () => {
     // A host workspace's transcripts are the daemon's own files; nothing
     // should be routed through an exec.
-    expect(createLaunchFileSystem(new LocalLaunchStrategy()).isRemote).toBe(false);
-    expect(createLaunchFileSystem(undefined).isRemote).toBe(false);
+    expect(createLaunchFileSystem(new LocalLaunchStrategy()).isIsolated).toBe(false);
+    expect(createLaunchFileSystem(undefined).isIsolated).toBe(false);
   });
 });

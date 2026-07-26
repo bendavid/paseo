@@ -131,8 +131,8 @@ async function resolveOmpSessionsDir(
 ): Promise<string> {
   // The container has its own HOME and its own settings file; the daemon's
   // environment says nothing about either.
-  const env = files.isRemote ? {} : (options.env ?? process.env);
-  const homeDir = files.isRemote ? await files.homeDir() : (options.homeDir ?? homedir());
+  const env = files.isIsolated ? {} : (options.env ?? process.env);
+  const homeDir = files.isIsolated ? await files.homeDir() : (options.homeDir ?? homedir());
   const baseDir =
     options.cwd && options.launchStrategy?.isIsolated
       ? options.launchStrategy.resolveCwd(options.cwd)

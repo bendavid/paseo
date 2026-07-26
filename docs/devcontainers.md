@@ -142,10 +142,22 @@ a walk plus one exec per file. Claude and omp both read through it, so their
 import lists, replayed history, and Claude's ephemeral-transcript sweep all
 address the environment the agent actually ran in.
 
-One consequence: reading a transcript is now I/O against a possibly-remote
-filesystem, so Claude's history load is async. `streamHistory()` and
-`attemptRewind()` await it — anything else that grows a dependency on
-`persistedHistory` must do the same.
+Both are local disks; what differs is the cost of reaching one. A host read is
+a `readFileSync` (~1ms); a container read is a process spawn (~75ms measured
+against podman). That is why Claude's history load became async — 75ms of
+blocked event loop per resumed session, in a constructor, would stall every
+other session on the daemon — and why the listing is a single `find` rather
+than a walk plus a stat per file.
+
+Async would normally leave a standing hazard — `persistedHistory` and the
+rewind anchors not yet populated when the constructor returns, and a reader
+that forgets to wait seeing an empty history rather than an error. Instead the
+load happens **before the session escapes its factory**:
+`ClaudeAgentClient.resumeSession` awaits `hydratePersistedHistory()`, and the
+one path that swaps the session id mid-life (`rebindConversationSession`, via
+rewind's now-awaitable `setSessionId`) awaits its own reload. There is no
+window in which a caller holds a session whose history is still arriving, so
+no reader needs to remember anything.
 
 ## Testing
 
