@@ -3032,10 +3032,10 @@ class ClaudeAgentSession implements AgentSession {
 
   /**
    * Which `claude` the SDK should launch. Host sessions get the binary
-   * resolved against the daemon's PATH; container sessions get the name the
-   * container resolves on its own PATH. A bare name has no JS extension, so
-   * the SDK treats it as a native executable and passes only CLI flags —
-   * which is what exec-ing it needs.
+   * resolved against the daemon's PATH; container sessions get the path the
+   * container resolves for itself. Neither has a JS extension, so the SDK
+   * treats it as a native executable and passes only CLI flags — which is what
+   * exec-ing it needs.
    */
   private async resolveClaudeExecutable(): Promise<string> {
     const strategy = this.launchStrategy;

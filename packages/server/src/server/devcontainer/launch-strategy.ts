@@ -88,11 +88,13 @@ export interface ProcessLaunchStrategy {
   resolveDaemonUrl(url: string): string | null;
 
   /**
-   * Check that the environment can run this command, and return it. An agent
-   * has to be installed and on the PATH inside the container — whether that
-   * comes from the image or from a bind mount is the image's business, not
-   * ours. Rejects with a legible error rather than letting the launch fail as
-   * an opaque exit 127 from the container runtime.
+   * Find where the environment keeps this command, and return a path the
+   * caller can spawn. An agent has to be installed inside the container —
+   * whether that comes from the image or from a bind mount is the image's
+   * business, not ours — but it does not have to sit on the bare exec's PATH,
+   * because the lookup goes through the environment's own shell. Rejects with
+   * a legible error rather than letting the launch fail as an opaque exit 127
+   * from the container runtime.
    */
   resolveExecutable(command: string): Promise<string>;
 
@@ -218,6 +220,8 @@ const DEFAULT_SHELL_PROBE_SCRIPT =
   'printf %s "${SHELL:-$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f7)}"';
 const DEFAULT_SHELL_PROBE_TIMEOUT_MS = 5_000;
 const EXECUTABLE_PROBE_TIMEOUT_MS = 10_000;
+/** Startup files print banners; this marks which line is the probe's answer. */
+const EXECUTABLE_PROBE_MARKER = "paseo-exe:";
 /** Every POSIX image has this, so it is the answer when the probe comes up empty. */
 const POSIX_FALLBACK_SHELL = "/bin/sh";
 
@@ -387,28 +391,87 @@ export class ContainerExecLaunchStrategy implements ProcessLaunchStrategy {
     if (cached) return cached;
     const resolved = this.probeExecutable(command);
     this.executables.set(command, resolved);
+    // Only a success is worth keeping. A container still finishing its start,
+    // or a probe that hit its timeout, would otherwise report the command
+    // missing for the rest of the container's life — and the user's only way
+    // out would be to rebuild it.
+    resolved.catch(() => {
+      if (this.executables.get(command) === resolved) this.executables.delete(command);
+    });
     return resolved;
   }
 
   /**
-   * Ask the environment whether it can run this command. The answer is the
-   * image's business: installed in it, or mounted into it and on its PATH.
+   * Ask the environment where this command is. Whether it is installed in the
+   * image or mounted into it is the image's business; what matters is that the
+   * answer comes from inside, and that it is a path rather than a yes.
+   *
+   * `docker exec` starts a bare process, so the only PATH it has is the one the
+   * image declares — typically `/usr/local/bin:/usr/bin`. A shell adds to that
+   * from `~/.profile` and `~/.bashrc`, which is where `~/.local/bin`,
+   * nvm and most per-user installs live. So an agent the user can run in a
+   * container terminal would fail to launch here, with an error saying it was
+   * not on the PATH while the terminal beside it ran it fine.
+   *
+   * Asking the environment's own login shell closes that gap, and returning the
+   * absolute path it prints closes it for the launch too: the spawn no longer
+   * depends on the exec's PATH at all.
    */
   private async probeExecutable(command: string): Promise<string> {
-    const child = this.spawn("sh", ["-c", `command -v ${shellQuote(command)}`], {
-      stdio: ["ignore", "ignore", "ignore"],
-      signal: AbortSignal.timeout(EXECUTABLE_PROBE_TIMEOUT_MS),
-    });
-    let code: number | null = null;
-    try {
-      [code] = (await once(child, "close")) as [number | null];
-    } catch {
-      code = null;
+    // An absolute path answers itself.
+    if (command.startsWith("/")) {
+      if (await this.runsSuccessfully(["-c", `test -x ${shellQuote(command)}`])) return command;
+      throw executableNotFoundError(command);
     }
-    if (code === 0) return command;
-    throw new Error(
-      `'${command}' is not on the container's PATH. Install it in the image, put it on PATH there, or run this workspace on the host.`,
-    );
+
+    const shell = await this.resolveDefaultShell();
+    const script = `printf '${EXECUTABLE_PROBE_MARKER}%s\\n' "$(command -v ${shellQuote(command)} || true)"`;
+    // Login *and* interactive: PATH lives in `~/.profile` for some users and
+    // `~/.bashrc` for others, and only the two together cover both.
+    for (const flags of [
+      ["-lic", script],
+      ["-ic", script],
+      ["-c", script],
+    ]) {
+      const found = readProbedPath(await this.captureOutput(shell, flags));
+      if (found) return found;
+    }
+
+    // A shell builtin or an alias has no path to print, but it does run.
+    if (await this.runsSuccessfully(["-c", `command -v ${shellQuote(command)}`])) return command;
+    throw executableNotFoundError(command);
+  }
+
+  private async captureOutput(shell: string, args: string[]): Promise<string> {
+    try {
+      const child = this.spawn(shell, args, {
+        // Interactive shells read stdin; an ignored one is an immediate EOF
+        // rather than a probe that waits out its timeout.
+        stdio: ["ignore", "pipe", "ignore"],
+        signal: AbortSignal.timeout(EXECUTABLE_PROBE_TIMEOUT_MS),
+      });
+      let stdout = "";
+      child.stdout?.on("data", (chunk: Buffer) => {
+        stdout += chunk.toString();
+      });
+      const [code] = (await once(child, "close")) as [number | null];
+      return code === 0 ? stdout : "";
+    } catch {
+      return "";
+    }
+  }
+
+  private async runsSuccessfully(args: string[]): Promise<boolean> {
+    try {
+      const child = this.spawn("sh", args, {
+        stdio: ["ignore", "ignore", "ignore"],
+        signal: AbortSignal.timeout(EXECUTABLE_PROBE_TIMEOUT_MS),
+      });
+      const [code] = (await once(child, "close")) as [number | null];
+      return code === 0;
+    } catch {
+      return false;
+    }
   }
 
   async resolveDefaultShell(): Promise<string> {
@@ -451,6 +514,27 @@ export class ContainerExecLaunchStrategy implements ProcessLaunchStrategy {
 /** POSIX shell quoting for a probe argument, so paths with spaces survive. */
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
+/**
+ * The marked line of a probe's output, when it names an absolute path. A shell
+ * that greets you, or one whose `command -v` answers with a builtin's name
+ * rather than a path, reads as no answer here.
+ */
+function readProbedPath(output: string): string | null {
+  for (const line of output.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith(EXECUTABLE_PROBE_MARKER)) continue;
+    const value = trimmed.slice(EXECUTABLE_PROBE_MARKER.length).trim();
+    if (value.startsWith("/")) return value;
+  }
+  return null;
+}
+
+function executableNotFoundError(command: string): Error {
+  return new Error(
+    `'${command}' is not on the container's PATH. Install it in the image, put it on PATH there, or run this workspace on the host.`,
+  );
 }
 
 /** Rebuild a strategy from its serialized form (e.g. inside the terminal worker). */

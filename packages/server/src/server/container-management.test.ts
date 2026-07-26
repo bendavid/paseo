@@ -1,4 +1,5 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { once } from "node:events";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, test, vi } from "vitest";
@@ -1148,6 +1149,34 @@ test("an unanswerable shell probe resolves to /bin/sh", async () => {
   await expect(strategy.resolveDefaultShell()).resolves.toBe("/bin/sh");
 });
 
+test("a failed executable probe is not remembered as an answer", async () => {
+  // A container still finishing its start answers nothing. Keeping that as the
+  // verdict would report the agent missing for the container's whole life,
+  // with a rebuild as the only way out.
+  const runtimeDir = mkdtempSync(path.join(tmpdir(), "paseo-probe-runtime-"));
+  const callLog = path.join(runtimeDir, "calls");
+  const fakeRuntime = path.join(runtimeDir, "runtime.sh");
+  writeFileSync(fakeRuntime, `#!/bin/sh\necho call >> ${callLog}\nexit 1\n`, { mode: 0o755 });
+  const strategy = new ContainerExecLaunchStrategy({
+    command: fakeRuntime,
+    leadingArgs: ["exec"],
+    optionArgs: [],
+    targetArgs: [HANDLE.identifier],
+    workdirFlag: "-w",
+    envFlag: "-e",
+    ttyArgs: ["-t"],
+    // The exec binary runs on the host, so this has to be a real directory.
+    hostWorkspaceFolder: runtimeDir,
+    remoteWorkspaceFolder: HANDLE.remoteWorkspaceFolder,
+  });
+
+  await expect(strategy.resolveExecutable("claude")).rejects.toThrow(/not on the container's PATH/);
+  const afterFirst = readFileSync(callLog, "utf8").split("\n").length;
+  await expect(strategy.resolveExecutable("claude")).rejects.toThrow(/not on the container's PATH/);
+
+  expect(readFileSync(callLog, "utf8").split("\n").length).toBeGreaterThan(afterFirst);
+});
+
 test("a serialized strategy round-trips into an identical one", () => {
   // Terminals are created in a worker process, which can only receive data.
   const strategy = dockerExecStrategy(HANDLE, "/tmp/test-workspace");
@@ -1586,13 +1615,72 @@ dockerTest(
       const handle = await backend.up(ref);
       const strategy = backend.createStrategy(ref.key, cwd, handle);
 
-      // An agent has to be on the container's PATH, however it got there.
-      expect(await strategy.resolveExecutable("sh")).toBe("sh");
+      // An agent has to be on the container's PATH, however it got there, and
+      // the answer is where it is — the launch then needs no PATH at all.
+      expect(await strategy.resolveExecutable("sh")).toMatch(/^\/.*\/sh$/);
       // Without this check the launch reaches the container runtime and comes
       // back as "exited with code 127", which says nothing about what to do.
       await expect(strategy.resolveExecutable("claude")).rejects.toThrow(
         /'claude' is not on the container's PATH/,
       );
+    } finally {
+      await backend.stop(ref, { remove: true }).catch(() => {});
+    }
+  },
+  180_000,
+);
+
+dockerTest(
+  "real backend: an agent on PATH only through the shell's startup files is found",
+  async () => {
+    // The reported case: `claude` runs fine in a container terminal but the
+    // launch says it is not on the PATH. `docker exec` starts a bare process
+    // with only the image's PATH; the terminal runs a shell, which adds what
+    // the user's startup files put there — ~/.local/bin, nvm, and so on.
+    const cwd = mkdtempSync(path.join(tmpdir(), "paseo-devcontainer-real-"));
+    writeFileSync(path.join(cwd, ".devcontainer.json"), '{"image":"alpine:latest"}');
+    const backend = createDevContainerBackend({ logger: createTestLogger() });
+    const ref = { key: "real-shell-path", kind: "workspace" as const, workspaceFolder: cwd };
+
+    expect(await backend.isAvailable()).toBe(true);
+
+    try {
+      const handle = await backend.up(ref);
+      const strategy = backend.createStrategy(ref.key, cwd, handle);
+
+      // An agent somewhere the image's PATH does not mention, plus a startup
+      // file that puts it there — exactly how a per-user install looks.
+      const install = strategy.spawn("sh", [
+        "-c",
+        [
+          "mkdir -p /opt/agent-bin /etc/profile.d",
+          "printf '#!/bin/sh\\necho ran-in-container\\n' > /opt/agent-bin/fakeagent",
+          "chmod +x /opt/agent-bin/fakeagent",
+          "printf 'export PATH=/opt/agent-bin:$PATH\\n' > /etc/profile.d/agent-path.sh",
+        ].join(" && "),
+      ]);
+      await new Promise((resolve) => install.on("close", resolve));
+
+      // A bare exec cannot see it — this is the state that produced the bug.
+      const bare = strategy.spawn("sh", ["-c", "command -v fakeagent"], {
+        stdio: ["ignore", "ignore", "ignore"],
+      });
+      const [bareCode] = (await once(bare, "close")) as [number | null];
+      expect(bareCode).not.toBe(0);
+
+      // Asking the environment's own shell finds it, and answers with a path
+      // that needs no PATH to launch.
+      const resolved = await strategy.resolveExecutable("fakeagent");
+      expect(resolved).toBe("/opt/agent-bin/fakeagent");
+
+      const child = strategy.spawn(resolved, [], { stdio: ["ignore", "pipe", "ignore"] });
+      let output = "";
+      child.stdout?.on("data", (chunk: Buffer) => {
+        output += chunk.toString();
+      });
+      const [code] = (await once(child, "close")) as [number | null];
+      expect(code).toBe(0);
+      expect(output.trim()).toBe("ran-in-container");
     } finally {
       await backend.stop(ref, { remove: true }).catch(() => {});
     }
