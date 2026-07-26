@@ -22,6 +22,7 @@ import {
   type AgentRuntimeInfo,
   type AgentSession,
   type AgentSessionConfig,
+  type ProviderAvailabilityOptions,
   type AgentSlashCommand,
   type AgentStreamEvent,
   type AgentTimelineItem,
@@ -6557,8 +6558,16 @@ export class CodexAppServerAgentClient implements AgentClient {
     }
   }
 
-  async isAvailable(): Promise<boolean> {
+  async isAvailable(options?: ProviderAvailabilityOptions): Promise<boolean> {
     const launch = await resolveCodexLaunch(this.runtimeSettings);
+    const strategy = options?.launchStrategy;
+    if (strategy?.isIsolated) {
+      // The host's copy is irrelevant: this session would run in the container.
+      return strategy
+        .resolveExecutable(launch.command)
+        .then(() => true)
+        .catch(() => false);
+    }
     const availability = await checkCodexLaunchAvailable(launch);
     return availability.available;
   }

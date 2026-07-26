@@ -836,21 +836,19 @@ export class ProviderSnapshotManager {
         (catalogOptions.scope === "workspace" && this.resolveLaunchStrategy
           ? ((await this.resolveLaunchStrategy(catalogOptions.cwd)) ?? undefined)
           : undefined);
-      // isAvailable() inspects the host, so for a container workspace it answers
-      // a question about the wrong machine: a tool installed only in the image
-      // would read as missing, and a host-only tool as present. Fetching the
-      // catalog inside the container is the honest test — it succeeds exactly
-      // when the tool is there and usable.
-      if (!launchStrategy?.isIsolated) {
-        const available = await withTimeout(
-          client.isAvailable(),
-          this.refreshTimeoutMs,
-          `Timed out checking ${definition.label} availability after ${this.refreshTimeoutMs}ms`,
-        );
-        if (!available) {
-          setEntry({ ...base, status: "unavailable", enabled: true });
-          return;
-        }
+      // The strategy goes with the question: a provider that gates on a binary
+      // answers for the container rather than the host, while gates that have
+      // nothing to do with the filesystem — an opt-in env var, a disabled
+      // provider — still apply. Skipping the check entirely would probe
+      // providers that said no.
+      const available = await withTimeout(
+        client.isAvailable(launchStrategy ? { launchStrategy } : undefined),
+        this.refreshTimeoutMs,
+        `Timed out checking ${definition.label} availability after ${this.refreshTimeoutMs}ms`,
+      );
+      if (!available) {
+        setEntry({ ...base, status: "unavailable", enabled: true });
+        return;
       }
       const catalog = await withTimeout(
         definition.fetchCatalog(

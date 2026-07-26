@@ -594,6 +594,11 @@ export interface AgentSessionConfig {
   internal?: boolean;
 }
 
+export interface ProviderAvailabilityOptions {
+  /** Present when the check is for a container rather than the host. */
+  launchStrategy?: ProcessLaunchStrategy;
+}
+
 export interface AgentLaunchContext {
   agentId?: string;
   env?: Record<string, string>;
@@ -738,7 +743,14 @@ export interface AgentClient {
    * Check if this provider is available (CLI binary is installed).
    * Returns true if available, false otherwise.
    */
-  isAvailable(): Promise<boolean>;
+  /**
+   * Whether this provider can run for a given launch target. Container
+   * launches pass their strategy so a provider that gates on a binary answers
+   * for the container rather than for the host — and so gates that have
+   * nothing to do with the filesystem (an opt-in env var, a disabled
+   * provider) still apply.
+   */
+  isAvailable(options?: ProviderAvailabilityOptions): Promise<boolean>;
   getDiagnostic?(): Promise<{ diagnostic: string }>;
   /**
    * Archive a durable native session (best-effort). Runtime release belongs to AgentSession.close().

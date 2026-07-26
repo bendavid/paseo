@@ -79,6 +79,7 @@ import {
   type AgentRuntimeInfo,
   type AgentSession,
   type AgentSessionConfig,
+  type ProviderAvailabilityOptions,
   type AgentSlashCommand,
   type AgentStreamEvent,
   type AgentTimelineItem,
@@ -973,9 +974,9 @@ export class ACPAgentClient implements AgentClient {
     });
   }
 
-  async isAvailable(): Promise<boolean> {
+  async isAvailable(options?: ProviderAvailabilityOptions): Promise<boolean> {
     try {
-      await this.resolveLaunchCommand();
+      await this.resolveLaunchCommand(options);
       return true;
     } catch {
       return false;

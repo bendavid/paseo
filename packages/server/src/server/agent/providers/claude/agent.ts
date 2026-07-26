@@ -83,6 +83,7 @@ import {
   type AgentRunResult,
   type AgentSession,
   type AgentSessionConfig,
+  type ProviderAvailabilityOptions,
   type AgentSlashCommand,
   type AgentStreamEvent,
   type AgentTimelineItem,
@@ -1567,10 +1568,18 @@ export class ClaudeAgentClient implements AgentClient {
     });
   }
 
-  async isAvailable(): Promise<boolean> {
+  async isAvailable(options?: ProviderAvailabilityOptions): Promise<boolean> {
+    const strategy = options?.launchStrategy;
+    if (strategy?.isIsolated) {
+      // The host's copy is irrelevant: this session would run in the container.
+      return strategy
+        .resolveExecutable(CLAUDE_CONTAINER_COMMAND)
+        .then(() => true)
+        .catch(() => false);
+    }
     const launch = await resolveProviderLaunch({
       commandConfig: this.runtimeSettings?.command,
-      defaultBinary: "claude",
+      defaultBinary: CLAUDE_CONTAINER_COMMAND,
     });
     const availability = await checkProviderLaunchAvailable(launch);
     return availability.available;
