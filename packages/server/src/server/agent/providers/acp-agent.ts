@@ -1014,9 +1014,7 @@ export class ACPAgentClient implements AgentClient {
     launchEnv?: Record<string, string>,
     launchStrategy?: ProcessLaunchStrategy,
   ): Promise<ACPProcessTransport> {
-    const { command, args } = await this.resolveLaunchCommand({
-      isolated: launchStrategy?.isIsolated ?? false,
-    });
+    const { command, args } = await this.resolveLaunchCommand({ launchStrategy });
     const envSpec = createProviderEnvSpec({
       runtimeSettings: this.runtimeSettings,
       overlays: [launchEnv],
@@ -1244,21 +1242,23 @@ export class ACPAgentClient implements AgentClient {
   }
 
   protected async resolveLaunchCommand(options?: {
-    isolated?: boolean;
+    launchStrategy?: ProcessLaunchStrategy;
   }): Promise<{ command: string; args: string[] }> {
     const prefix = await resolveProviderLaunch({
       commandConfig: this.runtimeSettings?.command,
       defaultBinary: this.defaultCommand[0],
     });
-    // An isolated launch resolves the command on the container's PATH, so
-    // checking the host's would reject a perfectly good container tool (and
-    // accept a host one the container cannot run). A missing command surfaces
-    // as an exec failure with the runtime's own error.
-    if (!options?.isolated) {
-      const availability = await checkProviderLaunchAvailable(prefix);
-      if (!availability.available) {
-        throw new Error(`${this.provider} command '${this.defaultCommand[0]}' not found`);
-      }
+    const strategy = options?.launchStrategy;
+    if (strategy?.isIsolated) {
+      // Whether the host has this tool says nothing about the container.
+      return {
+        command: await strategy.resolveExecutable(prefix.command),
+        args: [...prefix.args, ...this.defaultCommand.slice(1)],
+      };
+    }
+    const availability = await checkProviderLaunchAvailable(prefix);
+    if (!availability.available) {
+      throw new Error(`${this.provider} command '${this.defaultCommand[0]}' not found`);
     }
     return {
       command: prefix.command,
@@ -2345,7 +2345,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       commandConfig: this.runtimeSettings?.command,
       defaultBinary: this.defaultCommand[0],
     });
-    // Isolated launches resolve the command on the container's PATH — see
+    // Isolated launches resolve on the container's PATH — see
     // ACPAgentClient.resolveLaunchCommand.
     if (!this.launchStrategy?.isIsolated) {
       const availability = await checkProviderLaunchAvailable(prefix);
@@ -2354,7 +2354,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       }
     }
 
-    const command = prefix.command;
+    const command = this.launchStrategy?.isIsolated
+      ? await this.launchStrategy.resolveExecutable(prefix.command)
+      : prefix.command;
     const args = [...prefix.args, ...this.defaultCommand.slice(1)];
     const envSpec = createProviderEnvSpec({
       runtimeSettings: this.runtimeSettings,

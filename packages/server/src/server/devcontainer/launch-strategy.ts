@@ -88,6 +88,15 @@ export interface ProcessLaunchStrategy {
   resolveDaemonUrl(url: string): string | null;
 
   /**
+   * Check that the environment can run this command, and return it. An agent
+   * has to be installed and on the PATH inside the container — whether that
+   * comes from the image or from a bind mount is the image's business, not
+   * ours. Rejects with a legible error rather than letting the launch fail as
+   * an opaque exit 127 from the container runtime.
+   */
+  resolveExecutable(command: string): Promise<string>;
+
+  /**
    * The interactive shell a terminal should launch, or null when the caller's
    * own default applies. Local execution returns null. Container execution
    * returns the user's login shell inside the environment, because the host's
@@ -124,6 +133,11 @@ export class LocalLaunchStrategy implements ProcessLaunchStrategy {
 
   resolveDaemonUrl(url: string): string {
     return url;
+  }
+
+  async resolveExecutable(command: string): Promise<string> {
+    // The host already resolved this against its own PATH.
+    return command;
   }
 
   async resolveDefaultShell(): Promise<null> {
@@ -203,6 +217,7 @@ const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
 const DEFAULT_SHELL_PROBE_SCRIPT =
   'printf %s "${SHELL:-$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f7)}"';
 const DEFAULT_SHELL_PROBE_TIMEOUT_MS = 5_000;
+const EXECUTABLE_PROBE_TIMEOUT_MS = 10_000;
 /** Every POSIX image has this, so it is the answer when the probe comes up empty. */
 const POSIX_FALLBACK_SHELL = "/bin/sh";
 
@@ -258,6 +273,8 @@ export class ContainerExecLaunchStrategy implements ProcessLaunchStrategy {
 
   private readonly spec: ContainerExecSpec;
   private defaultShell: Promise<string> | null = null;
+  /** One resolution per command, cached for the container's lifetime. */
+  private readonly executables = new Map<string, Promise<string>>();
 
   constructor(spec: ContainerExecSpec) {
     this.spec = { ...spec, hostWorkspaceFolder: resolve(spec.hostWorkspaceFolder) };
@@ -365,6 +382,35 @@ export class ContainerExecLaunchStrategy implements ProcessLaunchStrategy {
     return parsed.toString();
   }
 
+  async resolveExecutable(command: string): Promise<string> {
+    const cached = this.executables.get(command);
+    if (cached) return cached;
+    const resolved = this.probeExecutable(command);
+    this.executables.set(command, resolved);
+    return resolved;
+  }
+
+  /**
+   * Ask the environment whether it can run this command. The answer is the
+   * image's business: installed in it, or mounted into it and on its PATH.
+   */
+  private async probeExecutable(command: string): Promise<string> {
+    const child = this.spawn("sh", ["-c", `command -v ${shellQuote(command)}`], {
+      stdio: ["ignore", "ignore", "ignore"],
+      signal: AbortSignal.timeout(EXECUTABLE_PROBE_TIMEOUT_MS),
+    });
+    let code: number | null = null;
+    try {
+      [code] = (await once(child, "close")) as [number | null];
+    } catch {
+      code = null;
+    }
+    if (code === 0) return command;
+    throw new Error(
+      `'${command}' is not on the container's PATH. Install it in the image, put it on PATH there, or run this workspace on the host.`,
+    );
+  }
+
   async resolveDefaultShell(): Promise<string> {
     // One probe per strategy, so opening several terminals in the same
     // container doesn't re-ask.
@@ -400,6 +446,11 @@ export class ContainerExecLaunchStrategy implements ProcessLaunchStrategy {
   serialize(): ContainerExecSpec {
     return { ...this.spec };
   }
+}
+
+/** POSIX shell quoting for a probe argument, so paths with spaces survive. */
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
 /** Rebuild a strategy from its serialized form (e.g. inside the terminal worker). */

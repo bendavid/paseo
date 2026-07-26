@@ -3003,14 +3003,17 @@ class ClaudeAgentSession implements AgentSession {
 
   /**
    * Which `claude` the SDK should launch. Host sessions get the binary
-   * resolved against the daemon's PATH; container sessions get the bare
-   * command name so it resolves on the container's PATH instead — a host path
-   * (or the daemon's own node) does not exist inside the image. A bare name
-   * has no JS extension, so the SDK treats it as a native executable and
-   * passes only CLI flags, which is exactly what exec-ing it needs.
+   * resolved against the daemon's PATH; container sessions get the name the
+   * container resolves on its own PATH. A bare name has no JS extension, so
+   * the SDK treats it as a native executable and passes only CLI flags —
+   * which is what exec-ing it needs.
    */
   private async resolveClaudeExecutable(): Promise<string> {
-    return this.launchStrategy?.isIsolated ? CLAUDE_CONTAINER_COMMAND : this.resolveBinary();
+    const strategy = this.launchStrategy;
+    // The host's copy is irrelevant to a container session — and the host may
+    // not have one at all.
+    if (!strategy?.isIsolated) return this.resolveBinary();
+    return strategy.resolveExecutable(CLAUDE_CONTAINER_COMMAND);
   }
 
   private async buildOptions(): Promise<ClaudeOptions> {

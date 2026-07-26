@@ -500,17 +500,19 @@ export async function findDefaultCodexBinary(): Promise<string | null> {
 
 async function resolveCodexLaunchPrefix(
   runtimeSettings?: ProviderRuntimeSettings,
-  options?: { isolated?: boolean },
+  options?: { launchStrategy?: ProcessLaunchStrategy },
 ): Promise<{
   command: string;
   args: string[];
 }> {
   const launch = await resolveCodexLaunch(runtimeSettings);
-  // An isolated launch runs the container's codex off the container's PATH:
-  // the host's resolved path does not exist inside the image, and the host's
-  // availability answers a question about the wrong machine.
-  if (options?.isolated) {
-    return { command: launch.command, args: launch.args };
+  const strategy = options?.launchStrategy;
+  if (strategy?.isIsolated) {
+    // Whether the host has codex answers a question about the wrong machine.
+    return {
+      command: await strategy.resolveExecutable(launch.command),
+      args: launch.args,
+    };
   }
   const availability = await checkCodexLaunchAvailable(launch);
   if (!availability.available) {
@@ -6294,7 +6296,7 @@ export class CodexAppServerAgentClient implements AgentClient {
     options?: { goalsEnabled?: boolean; agentId?: string; launchStrategy?: ProcessLaunchStrategy },
   ): Promise<ChildProcessWithoutNullStreams> {
     const launchPrefix = await resolveCodexLaunchPrefix(this.runtimeSettings, {
-      isolated: options?.launchStrategy?.isIsolated ?? false,
+      launchStrategy: options?.launchStrategy,
     });
     const args = [...launchPrefix.args, "app-server"];
     if (options?.goalsEnabled) {

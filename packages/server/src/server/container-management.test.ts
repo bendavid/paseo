@@ -1452,6 +1452,34 @@ dockerTest(
 );
 
 dockerTest(
+  "real backend: a missing agent is named, not left to fail as exit 127",
+  async () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "paseo-devcontainer-real-"));
+    writeFileSync(path.join(cwd, ".devcontainer.json"), '{"image":"alpine:latest"}');
+    const backend = createDevContainerBackend({ logger: createTestLogger() });
+    const ref = { key: "real-exec", kind: "workspace" as const, workspaceFolder: cwd };
+
+    expect(await backend.isAvailable()).toBe(true);
+
+    try {
+      const handle = await backend.up(ref);
+      const strategy = backend.createStrategy(ref.key, cwd, handle);
+
+      // An agent has to be on the container's PATH, however it got there.
+      expect(await strategy.resolveExecutable("sh")).toBe("sh");
+      // Without this check the launch reaches the container runtime and comes
+      // back as "exited with code 127", which says nothing about what to do.
+      await expect(strategy.resolveExecutable("claude")).rejects.toThrow(
+        /'claude' is not on the container's PATH/,
+      );
+    } finally {
+      await backend.stop(ref, { remove: true }).catch(() => {});
+    }
+  },
+  180_000,
+);
+
+dockerTest(
   "real backend: the terminal shell comes from the container's own user, not the host",
   async () => {
     const cwd = mkdtempSync(path.join(tmpdir(), "paseo-devcontainer-real-"));
