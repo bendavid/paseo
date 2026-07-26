@@ -1371,39 +1371,54 @@ dockerTest(
 );
 
 dockerTest(
-  "real backend: a probe and a workspace on the same directory get separate containers",
+  "real backend: workspaces and probes on one directory each get their own container",
   async () => {
     const cwd = mkdtempSync(path.join(tmpdir(), "paseo-devcontainer-real-"));
     writeFileSync(path.join(cwd, ".devcontainer.json"), '{"image":"alpine:latest"}');
     const backend = createDevContainerBackend({ logger: createTestLogger() });
-    const workspaceRef = {
-      key: "ws-identity-test",
-      kind: "workspace" as const,
-      workspaceFolder: cwd,
-    };
+    // Two workspaces can share a directory, and a probe can run against a
+    // directory a workspace already occupies. All three are the same folder and
+    // the same devcontainer.json — only the key differs.
+    const firstRef = { key: "ws-identity-a", kind: "workspace" as const, workspaceFolder: cwd };
+    const secondRef = { key: "ws-identity-b", kind: "workspace" as const, workspaceFolder: cwd };
     const probeRef = { key: "probe:identity-test", kind: "probe" as const, workspaceFolder: cwd };
 
     expect(await backend.isAvailable()).toBe(true);
 
     try {
-      const workspaceHandle = await backend.up(workspaceRef);
+      const firstHandle = await backend.up(firstRef);
+      const secondHandle = await backend.up(secondRef);
       const probeHandle = await backend.up(probeRef);
 
       // The devcontainer CLI identifies containers by workspace folder unless
       // it is given id labels, so without them these would be one container —
-      // and tearing the probe down would kill the workspace's agents.
-      expect(probeHandle.identifier).not.toBe(workspaceHandle.identifier);
+      // and tearing any of them down would stop the others' agents.
+      const identifiers = new Set([
+        firstHandle.identifier,
+        secondHandle.identifier,
+        probeHandle.identifier,
+      ]);
+      expect(identifiers.size).toBe(3);
 
       await backend.stop(probeRef, { remove: true });
 
       expect(await backend.isAlreadyRunning(probeRef)).toBe(false);
-      expect(await backend.isAlreadyRunning(workspaceRef)).toBe(true);
+      expect(await backend.isAlreadyRunning(firstRef)).toBe(true);
+      expect(await backend.isAlreadyRunning(secondRef)).toBe(true);
+
+      // Stopping one workspace's container leaves the other's alone.
+      await backend.stop(firstRef, { remove: true });
+
+      expect(await backend.isAlreadyRunning(firstRef)).toBe(false);
+      expect(await backend.isAlreadyRunning(secondRef)).toBe(true);
+      expect(backend.getContainerInfo("ws-identity-b")).not.toBeNull();
     } finally {
-      await backend.stop(workspaceRef, { remove: true }).catch(() => {});
-      await backend.stop(probeRef, { remove: true }).catch(() => {});
+      for (const ref of [firstRef, secondRef, probeRef]) {
+        await backend.stop(ref, { remove: true }).catch(() => {});
+      }
     }
   },
-  180_000,
+  240_000,
 );
 
 dockerTest(

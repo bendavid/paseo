@@ -183,6 +183,12 @@ export function createDevContainerBackend(
   }
 
   function buildIdLabelArgs(ref: ContainerRef, configPath: string): string[] {
+    if (ref.kind !== "workspace" && ref.kind !== "probe") {
+      // The owner label is how the reaper recognises a probe container. A bad
+      // one is invisible to it, so the container would leak for good — fail at
+      // creation rather than at cleanup time.
+      throw new Error(`Container ref ${ref.key} has an invalid kind: ${String(ref.kind)}`);
+    }
     return [
       "--id-label",
       `${LOCAL_FOLDER_LABEL}=${resolve(ref.workspaceFolder)}`,
