@@ -1,6 +1,8 @@
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
+import { Download } from "lucide-react-native";
+import { Button } from "@/components/ui/button";
 import type { PdfPreviewProps } from "@/pdf/pdf-preview-props";
 
 /**
@@ -9,16 +11,27 @@ import type { PdfPreviewProps } from "@/pdf/pdf-preview-props";
  * pointing at a PDF downloads instead of rendering. Web/Electron get
  * `.web.tsx`, iOS gets `.ios.tsx` (WKWebView renders PDFs natively).
  *
- * Closing this gap means a real renderer for Android — pdf.js in a WebView, or
- * a native module over `PdfRenderer` — not a tweak here. See
- * docs/pdf-preview.md.
+ * Downloading is the way out here — it ends in the system share sheet, which
+ * offers whatever PDF apps are installed. Closing the gap properly means a real
+ * renderer for Android, not a tweak here. See docs/pdf-preview.md.
  */
-export function PdfPreview({ testID }: PdfPreviewProps) {
+export function PdfPreview({ onDownload, testID }: PdfPreviewProps) {
   const { t } = useTranslation();
 
   return (
     <View style={styles.centerState} testID={testID}>
       <Text style={styles.emptyText}>{t("panels.file.pdf.unsupportedPlatform")}</Text>
+      {onDownload ? (
+        <Button
+          size="sm"
+          variant="secondary"
+          leftIcon={Download}
+          onPress={onDownload}
+          testID="workspace-file-pdf-download"
+        >
+          {t("workspace.fileActions.download")}
+        </Button>
+      ) : null}
     </View>
   );
 }
@@ -28,6 +41,7 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
+    gap: theme.spacing[3],
     padding: theme.spacing[4],
     backgroundColor: theme.colors.surface1,
   },

@@ -3,6 +3,8 @@ import { ActivityIndicator, Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { WebView } from "react-native-webview";
+import { Download } from "lucide-react-native";
+import { Button } from "@/components/ui/button";
 import { persistAttachmentFromBytes } from "@/attachments/service";
 import type { AttachmentMetadata } from "@/attachments/types";
 import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
@@ -13,7 +15,7 @@ import { parentDirectoryUri, type PdfPreviewProps } from "@/pdf/pdf-preview-prop
  * WKWebView displays PDFs itself, with PDFKit's selection and zoom gestures —
  * but only from a URL, so the bytes are staged to a file first.
  */
-export function PdfPreview({ bytes, cacheId, fileName, testID }: PdfPreviewProps) {
+export function PdfPreview({ bytes, cacheId, fileName, onDownload, testID }: PdfPreviewProps) {
   const { t } = useTranslation();
   const [attachment, setAttachment] = useState<AttachmentMetadata | null>(null);
   const [failed, setFailed] = useState(false);
@@ -49,6 +51,17 @@ export function PdfPreview({ bytes, cacheId, fileName, testID }: PdfPreviewProps
     return (
       <View style={styles.centerState} testID={testID}>
         <Text style={styles.errorText}>{t("panels.file.pdf.failed")}</Text>
+        {onDownload ? (
+          <Button
+            size="sm"
+            variant="secondary"
+            leftIcon={Download}
+            onPress={onDownload}
+            testID="workspace-file-pdf-download"
+          >
+            {t("workspace.fileActions.download")}
+          </Button>
+        ) : null}
       </View>
     );
   }
@@ -104,7 +117,7 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    gap: theme.spacing[2],
+    gap: theme.spacing[3],
     padding: theme.spacing[4],
     backgroundColor: theme.colors.surface1,
   },

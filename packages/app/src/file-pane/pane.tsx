@@ -29,6 +29,7 @@ import { isRenderedMarkdownFile } from "@/components/file-pane-render-mode";
 import { PdfPreview } from "@/components/pdf-preview";
 import { hasPdfExtension, isPdfFile } from "@/pdf/pdf-mime";
 import type { PdfPreviewDocument } from "@/pdf/pdf-preview-props";
+import { usePdfDownload } from "@/pdf/use-pdf-download";
 import type { AttachmentMetadata } from "@/attachments/types";
 import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
 import { persistAttachmentFromBytes } from "@/attachments/service";
@@ -63,6 +64,7 @@ interface FilePreviewBodyProps {
   navigationRevision: number;
   imagePreviewUri: string | null;
   pdfDocument: PdfPreviewDocument | null;
+  onDownloadPdf?: () => void;
 }
 
 type TextExplorerFile = ExplorerFile & { kind: "text" };
@@ -234,6 +236,7 @@ function FilePreviewBody({
   navigationRevision,
   imagePreviewUri,
   pdfDocument,
+  onDownloadPdf,
 }: FilePreviewBodyProps) {
   const theme = UnistylesRuntime.getTheme();
   const { t } = useTranslation();
@@ -404,7 +407,9 @@ function FilePreviewBody({
       );
     }
 
-    return <PdfPreview {...pdfDocument} testID="workspace-file-pdf-preview" />;
+    return (
+      <PdfPreview {...pdfDocument} onDownload={onDownloadPdf} testID="workspace-file-pdf-preview" />
+    );
   }
 
   return (
@@ -500,6 +505,12 @@ export function FilePane({
     isCurrentPreview ? resolvedPreview.imageAttachment : null,
   );
   const pdfDocument = isCurrentPreview ? resolvedPreview.pdfDocument : null;
+  const onDownloadPdf = usePdfDownload({
+    serverId,
+    workspaceRoot: normalizedWorkspaceRoot,
+    readTarget,
+    pdfDocument,
+  });
   const isMarkdown = isMarkdownPreview(preview, location.path);
   const editable = isEditableTextFile({
     preview,
@@ -530,6 +541,7 @@ export function FilePane({
       navigationRevision={navigationRevision}
       imagePreviewUri={imagePreviewUri}
       pdfDocument={pdfDocument}
+      onDownloadPdf={onDownloadPdf}
     />
   );
 }
@@ -574,6 +586,7 @@ function FilePanePresentation({
   navigationRevision,
   imagePreviewUri,
   pdfDocument,
+  onDownloadPdf,
 }: {
   serverId: string;
   client: DaemonClient | null;
@@ -593,6 +606,7 @@ function FilePanePresentation({
   navigationRevision: number;
   imagePreviewUri: string | null;
   pdfDocument: PdfPreviewDocument | null;
+  onDownloadPdf?: () => void;
 }) {
   if (!client && readTarget) {
     return (
@@ -648,6 +662,7 @@ function FilePanePresentation({
         navigationRevision={navigationRevision}
         imagePreviewUri={imagePreviewUri}
         pdfDocument={pdfDocument}
+        onDownloadPdf={onDownloadPdf}
       />
     </View>
   );

@@ -57,6 +57,17 @@ Android's WebView has never shipped a PDF viewer — point it at a PDF and it
 downloads rather than renders. There is no system surface to hand the bytes to,
 so the base shell shows an unsupported message. This is a known, accepted gap.
 
+The message carries a **Download** button (`pdf/use-pdf-download.ts`), which is
+the way out: the download store fetches the file and then calls
+`Sharing.shareAsync` with its mime type, and Android's share sheet offers
+whatever PDF apps are installed. That mime comes from `getDownloadableFileInfo`
+on the daemon, which now returns `application/pdf` rather than
+`application/octet-stream` — without it Android offers generic file handlers
+instead of PDF viewers. The iOS shell shows the same button if staging fails.
+
+The button is absent when the file sits outside the workspace root: download
+tokens are scoped to that root, so there is nothing the daemon would issue.
+
 Closing it needs a real renderer, not a tweak: either pdf.js in a WebView (an
 esbuild-bundled viewer document, roughly what this feature shipped before the
 switch — see git history for `pdf-viewer-webview-entry.ts`) or a native module

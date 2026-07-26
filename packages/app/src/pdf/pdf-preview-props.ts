@@ -15,6 +15,14 @@ export interface PdfPreviewDocument {
 }
 
 export interface PdfPreviewProps extends PdfPreviewDocument {
+  /**
+   * Offered when the preview cannot render — on Android, where there is no
+   * system viewer, downloading is the only way to read the file, and the share
+   * sheet that follows is what hands it to a PDF app. Absent when the file
+   * cannot be downloaded (it lives outside the workspace the daemon will issue
+   * a token for).
+   */
+  onDownload?: () => void;
   testID?: string;
 }
 
