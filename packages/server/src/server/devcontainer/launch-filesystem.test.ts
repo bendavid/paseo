@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, writeFileSync, utimesSync } from "node:fs";
+import { mkdtempSync, mkdirSync, statSync, writeFileSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -65,6 +65,42 @@ describe("host launch filesystem", () => {
     expect(await files.readHead(missing, 10)).toBeNull();
     expect(await files.listFiles(missing, { suffix: ".jsonl", maxDepth: 2 })).toEqual([]);
     await expect(files.remove(missing)).resolves.toBeUndefined();
+  });
+
+  it("writes a file into a directory it made, then takes the tree away again", async () => {
+    // Providers that configure themselves through files — Pi's MCP config and
+    // its Paseo extension — need somewhere to put them that the agent can see.
+    const files = createLaunchFileSystem(null);
+    const dir = await files.makeTempDir("launch-fs-write-");
+    const target = path.join(dir, "nested", "config.json");
+
+    await files.writeFile(target, '{"ok":true}');
+
+    expect(await files.readFile(target)).toBe('{"ok":true}');
+    await files.remove(dir);
+    expect(await files.exists(dir)).toBe(false);
+  });
+
+  it("keeps a credential-bearing file to its owner", async () => {
+    // Pi's MCP config carries the daemon's auth token.
+    const files = createLaunchFileSystem(null);
+    const dir = await files.makeTempDir("launch-fs-mode-");
+    const target = path.join(dir, "mcp.json");
+
+    await files.writeFile(target, "{}", { mode: 0o600 });
+
+    expect(statSync(target).mode & 0o777).toBe(0o600);
+  });
+
+  it("fails loudly when a write cannot land", async () => {
+    // A missing config file surfaces later as an agent that quietly lost its
+    // tools, so writes throw where reads answer null.
+    const files = createLaunchFileSystem(null);
+    const root = seedTree();
+
+    await expect(
+      files.writeFile(path.join(root, "project-a", "one.jsonl", "under-a-file"), "x"),
+    ).rejects.toThrow();
   });
 
   it("uses the host filesystem for a host workspace", () => {

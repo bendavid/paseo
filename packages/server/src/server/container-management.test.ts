@@ -1497,6 +1497,17 @@ dockerTest(
       const hostFiles = createLaunchFileSystem(null);
       expect(await hostFiles.exists(transcript)).toBe(false);
 
+      // A provider configured through files needs them on the container's
+      // disk; the daemon's own /tmp is not mounted there.
+      const configDir = await files.makeTempDir("paseo-pi-mcp-");
+      const configPath = `${configDir}/mcp.json`;
+      await files.writeFile(configPath, '{"mcpServers":{}}');
+      expect(await files.readFile(configPath)).toBe('{"mcpServers":{}}');
+      expect(await hostFiles.exists(configPath)).toBe(false);
+
+      await files.remove(configDir);
+      expect(await files.exists(configPath)).toBe(false);
+
       await files.remove(transcript);
       expect(await files.exists(transcript)).toBe(false);
     } finally {

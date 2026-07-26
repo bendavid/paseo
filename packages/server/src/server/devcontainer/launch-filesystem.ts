@@ -1,6 +1,6 @@
-import { open, readdir, readFile, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, open, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { once } from "node:events";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import type { ProcessLaunchStrategy } from "./launch-strategy.js";
 
@@ -20,6 +20,13 @@ import type { ProcessLaunchStrategy } from "./launch-strategy.js";
  * through the workspace's launch strategy. Both are local disks — what the
  * container costs is a process spawn per operation, which is why the listing
  * is one `find` rather than a walk plus a stat each.
+ *
+ * Writes go the same way, for the mirror-image reason: a provider configured
+ * through files (Pi takes `--mcp-config` and `--extension` as paths) needs
+ * them where the agent will look, and the daemon's `/tmp` is not the
+ * container's. Reads answer null for anything missing; writes throw, because a
+ * config file that never landed shows up later as an agent that silently lost
+ * half its capabilities.
  */
 
 export interface LaunchFileStat {
@@ -33,6 +40,11 @@ export interface ListFilesOptions {
   suffix: string;
   /** How far below the root to descend; 1 means the root itself only. */
   maxDepth: number;
+}
+
+export interface WriteFileOptions {
+  /** Permission bits, for files carrying credentials. Defaults to the umask. */
+  mode?: number;
 }
 
 export interface LaunchFileSystem {
@@ -51,6 +63,11 @@ export interface LaunchFileSystem {
   /** Last `bytes` of a file; transcripts put the latest activity at the end. */
   readTail(filePath: string, bytes: number): Promise<string | null>;
   listFiles(root: string, options: ListFilesOptions): Promise<LaunchFileStat[]>;
+  /** A private directory for files the agent must be able to open. Throws. */
+  makeTempDir(prefix: string): Promise<string>;
+  /** Writes `contents`, creating parent directories. Throws on failure. */
+  writeFile(filePath: string, contents: string, options?: WriteFileOptions): Promise<void>;
+  /** Removes a file or a whole directory; a missing path is not an error. */
   remove(filePath: string): Promise<void>;
 }
 
@@ -151,8 +168,20 @@ class HostLaunchFileSystem implements LaunchFileSystem {
     }
   }
 
+  async makeTempDir(prefix: string): Promise<string> {
+    return mkdtemp(path.join(tmpdir(), prefix));
+  }
+
+  async writeFile(filePath: string, contents: string, options?: WriteFileOptions): Promise<void> {
+    await mkdir(path.dirname(filePath), { recursive: true });
+    await writeFile(filePath, contents, {
+      encoding: "utf8",
+      ...(options?.mode === undefined ? {} : { mode: options.mode }),
+    });
+  }
+
   async remove(filePath: string): Promise<void> {
-    await rm(filePath, { force: true }).catch(() => undefined);
+    await rm(filePath, { force: true, recursive: true }).catch(() => undefined);
   }
 }
 
@@ -209,8 +238,37 @@ class ContainerLaunchFileSystem implements LaunchFileSystem {
     return files;
   }
 
+  async makeTempDir(prefix: string): Promise<string> {
+    // TMPDIR rather than a hardcoded /tmp: some images point it elsewhere, and
+    // the six X's are what every mktemp — busybox included — expects.
+    const template = `${sanitizeTempPrefix(prefix)}XXXXXX`;
+    const created = (await this.run(`mktemp -d "\${TMPDIR:-/tmp}/${template}"`))?.trim();
+    if (!created) {
+      throw new Error("Could not create a temporary directory inside the container");
+    }
+    return created;
+  }
+
+  async writeFile(filePath: string, contents: string, options?: WriteFileOptions): Promise<void> {
+    // Container paths are POSIX whatever the daemon runs on.
+    const dir = path.posix.dirname(filePath);
+    // chmod in the same command, so a file holding credentials is never
+    // briefly world-readable between two execs.
+    const chmod =
+      options?.mode === undefined
+        ? ""
+        : ` && chmod ${options.mode.toString(8).padStart(3, "0")} ${quote(filePath)}`;
+    const written = await this.runWithStdin(
+      `mkdir -p ${quote(dir)} && cat > ${quote(filePath)}${chmod}`,
+      contents,
+    );
+    if (!written) {
+      throw new Error(`Could not write ${filePath} inside the container`);
+    }
+  }
+
   async remove(filePath: string): Promise<void> {
-    await this.run(`rm -f ${quote(filePath)}`);
+    await this.run(`rm -rf ${quote(filePath)}`);
   }
 
   private async run(script: string): Promise<string | null> {
@@ -229,6 +287,30 @@ class ContainerLaunchFileSystem implements LaunchFileSystem {
       return null;
     }
   }
+
+  private async runWithStdin(script: string, input: string): Promise<boolean> {
+    try {
+      const child = this.strategy.spawn("sh", ["-c", script], {
+        stdio: ["pipe", "ignore", "ignore"],
+        signal: AbortSignal.timeout(CONTAINER_COMMAND_TIMEOUT_MS),
+      });
+      child.stdin?.end(input);
+      const [code] = (await once(child, "close")) as [number | null];
+      return code === 0;
+    } catch {
+      return false;
+    }
+  }
+}
+
+/**
+ * The prefix names a directory the daemon chose, so it never legitimately
+ * contains shell metacharacters — drop anything that does rather than quote
+ * around it, since the template has to sit inside the expansion of TMPDIR.
+ */
+function sanitizeTempPrefix(prefix: string): string {
+  const cleaned = prefix.replace(/[^A-Za-z0-9._-]/gu, "");
+  return cleaned || "paseo-";
 }
 
 /**

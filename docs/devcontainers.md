@@ -111,7 +111,7 @@ If a container is required and not running, agent and terminal creation **fail**
 
 - `awaitStrategy` blocks on a pending activation and rejects if it never arrives.
 - Every failure path calls `deactivateContainer`, which resolves waiters. A path that forgets leaves agent creation hanging forever.
-- A provider that doesn't honor the launch strategy is refused on container workspaces via the `supportsIsolatedLaunch` capability. OpenCode does not honor it yet; Claude, Codex, OMP, and ACP providers do.
+- A provider that doesn't honor the launch strategy is refused on container workspaces via the `supportsIsolatedLaunch` capability. OpenCode does not honor it yet; Claude, Codex, OMP, Pi, and ACP providers do.
 
 ## The new-workspace probe
 
@@ -154,11 +154,31 @@ them differ from the host, and both matter:
 
 `LaunchFileSystem` (`devcontainer/launch-filesystem.ts`) is the seam: the host
 implementation is plain `node:fs`, the container one runs the equivalent POSIX
-commands (`find`/`stat`, `cat`, `head -c`, `tail -c`, `rm -f`) through the
+commands (`find`/`stat`, `cat`, `head -c`, `tail -c`, `rm -rf`) through the
 workspace's launch strategy. Listing is a single `find … -exec stat` rather than
-a walk plus one exec per file. Claude and omp both read through it, so their
+a walk plus one exec per file. Claude, omp and Pi all read through it, so their
 import lists, replayed history, and Claude's ephemeral-transcript sweep all
 address the environment the agent actually ran in.
+
+### Files a provider is configured through
+
+The same seam writes, for the mirror-image reason. Pi is configured by paths it
+opens itself — `--mcp-config` and `--extension`, the latter carrying the system
+prompt — and the daemon's `/tmp` is not the container's, so a host temp file
+would be a path Pi cannot open. `makeTempDir` and `writeFile` put them where Pi
+will look (`mktemp -d`, then `mkdir -p && cat >` over stdin). Two rules hold
+there:
+
+- **Writes throw where reads answer null.** A config file that never landed
+  surfaces much later as an agent that quietly lost half its tools.
+- **Credentials get their mode in the same command.** The MCP config names the
+  daemon's endpoint and auth token, so `writeFile` takes a `mode` and the
+  container path chmods in the same `sh -c` — never a window where it is
+  world-readable between two execs.
+
+Pi's _global_ config is read the same way: `~/.pi/agent/mcp.json` is merged
+into the generated one, and for a container workspace it is the container's
+copy under the container's HOME, not the daemon's.
 
 Both are local disks; what differs is the cost of reaching one. A host read is
 a `readFileSync` (~1ms); a container read is a process spawn (~75ms measured
@@ -186,9 +206,18 @@ no reader needs to remember anything.
 
 The real-container tests are the ones that catch exec-argument and environment mistakes; the unit tests cannot.
 
+For provider-side work there is a third option:
+`devcontainer/test-utils/fake-isolated-strategy.ts` reports `isIsolated`, maps
+paths the way a container does, and runs the resulting POSIX commands on the
+host. Most container support is a question of _which_ environment a provider
+addresses — where it spawns, where it writes the files the agent opens, where
+it looks for transcripts — and that is answerable without a runtime. Pi's
+container tests use it; what it cannot tell you is whether a real image
+behaves the same, which is what the docker-gated tests are for.
+
 ## Known gaps
 
-- **OpenCode and Pi** don't route through the launch strategy. Container workspaces refuse them for agent runs, and their importable-session lists come back empty there rather than offering the host's sessions.
+- **OpenCode** doesn't route through the launch strategy, and can't with the current seam: it isn't a subprocess Paseo spawns but a shared HTTP server (`opencode serve --port N`) that every workspace multiplexes over by passing `directory`. Containerizing it means a server per container, a way for the daemon to reach a port inside it, container paths in `directory`, and its `$PASEO_HOME/opencode-home` state moving too. Container workspaces refuse it for agent runs, and its importable-session list comes back empty there rather than offering the host's sessions.
 - **Shell integration and the bundled `paseo` hook CLI** are injected into the host-side environment (`buildTerminalEnvironment` prepends host paths), so a container terminal doesn't get zsh integration or the hook CLI on its PATH.
 - **Provider catalogs are fetched for every configured provider** during a probe, so a machine with several configured providers pays several in-container spawns per probe. Fetching only the selected provider's catalog would need the probe container to survive, which option B deliberately gives up.
 - **The provider snapshot is keyed by cwd**, so two workspaces sharing a directory with different backends overwrite each other's provider list. Fixing it properly means keying snapshots by workspace, which is a refactor beyond the container feature. The probe itself no longer contributes to this: it never writes the shared snapshot.
