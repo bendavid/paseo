@@ -27,7 +27,9 @@ export function providersSnapshotRequestOptions(input: {
   return {
     ...(normalizedCwd ? { cwd: normalizedCwd } : {}),
     ...(input.providers ? { providers: input.providers } : {}),
-    ...(input.containerBackend ? { containerBackend: input.containerBackend } : {}),
+    // null is meaningful — "answer for the host" — so only an absent value is
+    // dropped.
+    ...(input.containerBackend === undefined ? {} : { containerBackend: input.containerBackend }),
   };
 }
 

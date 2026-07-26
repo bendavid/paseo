@@ -24,6 +24,20 @@ export type { LaunchStrategyFactory };
  * the container is ready and rejects if it never arrives.
  */
 
+/**
+ * The workspace wants a container and there isn't one running. Distinct from a
+ * failure: agent and terminal creation refuse (they would otherwise run
+ * outside the container the user asked for), while a catalog refresh reports
+ * the providers as unavailable rather than as errors — the container's tool
+ * list is simply unknown until it starts.
+ */
+export class ContainerNotRunningError extends Error {
+  constructor(readonly workspaceKey: string) {
+    super("The workspace's container is not running");
+    this.name = "ContainerNotRunningError";
+  }
+}
+
 export interface LaunchStrategyRegistry {
   /**
    * Get the launch strategy for a workspace, awaiting any pending container

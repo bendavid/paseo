@@ -26,6 +26,7 @@ import {
 import type { LaunchStrategyRegistry } from "./devcontainer/launch-strategy-registry.js";
 import type { ContainerBackendRegistry } from "./devcontainer/container-backend-registry.js";
 import { ContainerProbeCoordinator } from "./devcontainer/container-probe-coordinator.js";
+import { ContainerNotRunningError } from "./devcontainer/launch-strategy-registry.js";
 import type { ContainerRef } from "./devcontainer/container-backend.js";
 import { discoverDevContainerConfig } from "./devcontainer/config-discovery.js";
 import type {
@@ -922,7 +923,7 @@ export class Session {
         // this as an error, not a fallback to host.
         const strategy = await this.launchStrategyRegistry.awaitStrategy(workspaceId);
         if (!strategy.isIsolated) {
-          throw new Error("Container is not running for this workspace");
+          throw new ContainerNotRunningError(workspaceId);
         }
         return strategy;
       },

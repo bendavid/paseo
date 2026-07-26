@@ -128,6 +128,7 @@ import type { RequestedSpeechProviders } from "./speech/speech-types.js";
 import { createSpeechService } from "./speech/speech-runtime.js";
 import { createDevContainerBackend, createLaunchStrategyRegistry } from "./devcontainer/index.js";
 import { createContainerBackendRegistry } from "./devcontainer/container-backend-registry.js";
+import { ContainerNotRunningError } from "./devcontainer/launch-strategy-registry.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import { AgentStorage } from "./agent/agent-storage.js";
 import { attachAgentStoragePersistence } from "./persistence-hooks.js";
@@ -846,12 +847,13 @@ export async function createPaseoDaemon(
       const workspace = workspaces.find((entry) => entry.workspaceId === workspaceId);
       const key = workspace?.containerBackend ? workspaceId : null;
       if (!key) return null;
-      // Strict: workspace-scoped catalog refresh must use the container's
-      // tool, not the host's. Throws if the container isn't running — the
-      // error surfaces in the snapshot entry.
+      // Strict: a workspace-scoped catalog refresh must use the container's
+      // tool, not the host's. When there is no container the caller decides
+      // what that means — the snapshot reports unavailable, agent creation
+      // refuses.
       const strategy = await launchStrategyRegistry.awaitStrategy(key);
       if (!strategy.isIsolated) {
-        throw new Error("Container is not running for this workspace");
+        throw new ContainerNotRunningError(key);
       }
       return strategy;
     },
@@ -884,7 +886,7 @@ export async function createPaseoDaemon(
       // this as an error, not a fallback to host.
       const strategy = await launchStrategyRegistry.awaitStrategy(workspaceId);
       if (!strategy.isIsolated) {
-        throw new Error("Container is not running for this workspace");
+        throw new ContainerNotRunningError(workspaceId);
       }
       return strategy;
     },

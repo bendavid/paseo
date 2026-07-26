@@ -87,6 +87,24 @@ The daemon binds `127.0.0.1` by default, which inside a container means the cont
 
 `ContainerExecLaunchStrategy.resolveDaemonUrl()` rewrites a loopback URL to the container's default gateway (captured as `hostGatewayAddress` at `up` time). That only helps if the daemon is actually listening on something other than loopback — bind it to `0.0.0.0` to enable these features for container workspaces. When there is no reachable address, `AgentManager` **drops** the injected MCP server and logs a warning rather than handing the agent a URL that costs it a full tool-call timeout per call.
 
+## A stopped container is not an error
+
+`ContainerNotRunningError` separates two readings of "this workspace wants a
+container and there isn't one":
+
+- **Agent and terminal creation refuse.** Running them anyway would put them
+  outside the container the user asked for.
+- **A catalog refresh reports the providers as `unavailable`.** The container's
+  tool list is unknown until it starts, which is not a failure the user can act
+  on — and marking every provider `error` turns the model picker red for a
+  workspace that is merely stopped.
+
+Relatedly, a snapshot refresh is answered for whichever workspace owns the
+directory, so the new-workspace screen has to say which environment it means:
+`refresh_providers_snapshot_request` with `containerBackend: null` asks for the
+host explicitly. Without it, pointing that screen at a directory that already
+holds a stopped container-backed workspace answers for _that_ workspace.
+
 ## No fallback to the host
 
 If a container is required and not running, agent and terminal creation **fail**. They never quietly run on the host — the user asked for isolation, and silently not providing it is worse than an error. Concretely:

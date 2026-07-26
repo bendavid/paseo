@@ -8,6 +8,7 @@ import type { Logger } from "pino";
 import { expandTilde } from "../../utils/path.js";
 import { withTimeout } from "../../utils/promise-timeout.js";
 import type { ProcessLaunchStrategy } from "../devcontainer/launch-strategy.js";
+import { ContainerNotRunningError } from "../devcontainer/launch-strategy-registry.js";
 import type {
   AgentClient,
   AgentCreateConfigParent,
@@ -103,6 +104,11 @@ export interface ProviderSnapshotManagerOptions {
 interface ProviderSnapshotRefreshOptions {
   cwd: string;
   providers?: AgentProvider[];
+  /**
+   * Run the probes in this environment instead of resolving one from the
+   * workspace at this cwd. A LocalLaunchStrategy asks for the host explicitly.
+   */
+  launchStrategy?: ProcessLaunchStrategy;
 }
 
 export interface ProviderSnapshotProbeOptions {
@@ -233,7 +239,7 @@ export class ProviderSnapshotManager {
     const providers = this.resolveRefreshProviders(options.providers);
     this.resetSnapshotToLoading(snapshotCwd, providers, { preserveExisting: false });
     this.emitChange(snapshotCwd);
-    await this.refreshProviders(target, providers ?? this.getProviderIds());
+    await this.refreshProviders(target, providers ?? this.getProviderIds(), options.launchStrategy);
   }
 
   /**
@@ -682,12 +688,14 @@ export class ProviderSnapshotManager {
   private async refreshProviders(
     target: ProviderSnapshotTarget,
     providers: AgentProvider[],
+    launchStrategy?: ProcessLaunchStrategy,
   ): Promise<void> {
     await this.loadProviders({
       snapshotCwd: target.snapshotCwd,
       catalogScope: target.catalogScope,
       providers,
       force: true,
+      launchStrategy,
     });
   }
   private resolveProvidersToWarm(cwd: string, providers?: AgentProvider[]): AgentProvider[] {
@@ -872,6 +880,18 @@ export class ProviderSnapshotManager {
         fetchedAt: new Date().toISOString(),
       });
     } catch (error) {
+      if (error instanceof ContainerNotRunningError) {
+        // Not a failure: the container simply isn't up, so its tool list is
+        // unknown. Reporting every provider as an error would paint the model
+        // picker red for a workspace that is merely stopped.
+        setEntry({
+          ...base,
+          status: "unavailable",
+          enabled: true,
+          error: toErrorMessage(error),
+        });
+        return;
+      }
       const emitted = setEntry({
         ...base,
         status: "error",
