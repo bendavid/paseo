@@ -14,10 +14,12 @@ import {
 } from "@/pdf/pdf-viewer-protocol";
 
 /**
- * The viewer runs in an iframe rather than in the page: pdf.js ships as ES
- * modules that lean on `import.meta.url` and a worker script, neither of which
- * Metro can bundle. The iframe document is built by
- * scripts/build-pdf-webview-html.mjs and carries pdf.js with it.
+ * The viewer runs in an iframe rather than in the page. Metro can bundle
+ * pdfjs-dist, but native needs a WebView either way — React Native has no DOM
+ * canvas to rasterize into — so one generated document serves every platform
+ * instead of a second, web-only renderer. The iframe also gets a real `Worker`,
+ * which a Metro import cannot provide. Built by
+ * scripts/build-pdf-webview-html.mjs. See docs/pdf-preview.md.
  */
 export function PdfPreview({ bytes, testID }: { bytes: Uint8Array; testID?: string }) {
   const { t } = useTranslation();

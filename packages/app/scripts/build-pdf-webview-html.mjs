@@ -1,7 +1,10 @@
 // Bundles the pdf.js viewer into a single self-contained HTML document, the
-// same way build-terminal-webview-html.mjs does for xterm. The app never
-// imports pdfjs-dist through Metro: pdf.js relies on `import.meta.url` and
-// emits ES modules, both of which esbuild resolves here at build time.
+// same way build-terminal-webview-html.mjs does for xterm.
+//
+// esbuild rather than Metro not because Metro chokes on pdfjs-dist (it doesn't)
+// but because native needs a WebView to get a canvas at all, and a real
+// `Worker` cannot come from a bundler import. One generated document then
+// serves every platform. See docs/pdf-preview.md.
 //
 // The legacy build is deliberate — it targets the same older Safari/WebView
 // baseline as the terminal bundle (ios15).

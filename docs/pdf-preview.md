@@ -6,10 +6,22 @@ iframe on web/Electron and in a `WebView` on iOS/Android.
 
 ## Why a bundled document instead of importing pdf.js
 
-`pdfjs-dist` cannot go through Metro. It ships ES modules that use
-`import.meta.url` to locate optional assets, and it wants a separate worker
-script — neither of which Metro resolves. So the viewer is built with esbuild
-instead:
+Not because Metro can't bundle `pdfjs-dist` — it can. A probe against
+`expo export --platform web` bundles both `pdfjs-dist` and
+`pdfjs-dist/build/pdf.worker.mjs` without error (+1.77 MB), and compiles away
+every `import.meta` reference. Two things bundling does not fix:
+
+- **React Native has no DOM canvas.** pdf.js rasterizes through
+  `page.render({ canvas })`, so iOS and Android need a WebView whatever the
+  bundler does. The WebView is there to supply a canvas, not to work around
+  module resolution.
+- **A `Worker` script cannot come from an import.** Importing the worker module
+  only registers `globalThis.pdfjsWorker`, which is pdf.js's _main-thread_
+  handler — parsing and rasterizing would land on the app's own thread.
+
+Given a WebView is required for native regardless, one generated document
+serving every platform beats a Metro-bundled web renderer plus a WebView
+renderer for native, so the viewer is built with esbuild:
 
 ```
 packages/app/scripts/build-pdf-webview-html.mjs
