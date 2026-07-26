@@ -121,6 +121,32 @@ Probe containers are deliberately **not** adopted by the workspace that gets cre
 - `devcontainer.json` is watched; a hash change emits `container.config_changed` so the client can offer a rebuild.
 - **Container details for the UI are captured when the container starts**, not queried per read. The workspace badge and the sidebar's container icon show backend, image, container name, user and start time, and a workspace descriptor is rebuilt on every workspace update — so a descriptor that queried the runtime, or that emitted an update once its answer arrived, would loop and burn a `docker inspect` per cycle. `getContainerInfo(key)` is a synchronous read of what `up` recorded.
 
+## Transcripts live where the agent ran
+
+Providers keep session transcripts outside the workspace: Claude in
+`~/.claude/projects/<encoded-cwd>`, omp in its session directory. Paseo reads
+them to list importable sessions and to replay a resumed conversation.
+
+For a container workspace those files are the **container's**. Two things about
+them differ from the host, and both matter:
+
+- They are under the **container's HOME**, which is its user's, not yours.
+- Claude's directory name encodes the **cwd the agent saw** — `/workspaces/app`,
+  not `/home/you/app` — so even a mounted `~/.claude` would not line up.
+
+`LaunchFileSystem` (`devcontainer/launch-filesystem.ts`) is the seam: the host
+implementation is plain `node:fs`, the container one runs the equivalent POSIX
+commands (`find`/`stat`, `cat`, `head -c`, `tail -c`, `rm -f`) through the
+workspace's launch strategy. Listing is a single `find … -exec stat` rather than
+a walk plus one exec per file. Claude and omp both read through it, so their
+import lists, replayed history, and Claude's ephemeral-transcript sweep all
+address the environment the agent actually ran in.
+
+One consequence: reading a transcript is now I/O against a possibly-remote
+filesystem, so Claude's history load is async. `streamHistory()` and
+`attemptRewind()` await it — anything else that grows a dependency on
+`persistedHistory` must do the same.
+
 ## Testing
 
 `packages/server/src/server/container-management.test.ts` holds both layers:
@@ -132,8 +158,7 @@ The real-container tests are the ones that catch exec-argument and environment m
 
 ## Known gaps
 
-- **OpenCode** doesn't route through the launch strategy (its server manager spawns directly). Container workspaces refuse it rather than running it on the host.
-- **OMP session import** reads JSONL files from disk; a container's session files are not visible from the host.
+- **OpenCode and Pi** don't route through the launch strategy. Container workspaces refuse them for agent runs, and their importable-session lists come back empty there rather than offering the host's sessions.
 - **Shell integration and the bundled `paseo` hook CLI** are injected into the host-side environment (`buildTerminalEnvironment` prepends host paths), so a container terminal doesn't get zsh integration or the hook CLI on its PATH.
 - **Provider catalogs are fetched for every configured provider** during a probe, so a machine with several configured providers pays several in-container spawns per probe. Fetching only the selected provider's catalog would need the probe container to survive, which option B deliberately gives up.
 - **The provider snapshot is keyed by cwd**, so two workspaces sharing a directory with different backends overwrite each other's provider list. Fixing it properly means keying snapshots by workspace, which is a refactor beyond the container feature. The probe itself no longer contributes to this: it never writes the shared snapshot.

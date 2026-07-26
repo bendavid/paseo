@@ -1,7 +1,7 @@
 import type { ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
-import { promises } from "node:fs";
+
 import os from "node:os";
 import path from "node:path";
 import {
@@ -54,6 +54,10 @@ import { claudeQuery, type ClaudeOptions, type ClaudeQueryFactory } from "./quer
 import { realClaudeRewindSdk, revertClaudeConversation, revertClaudeFiles } from "./rewind.js";
 import { normalizeProviderReplayTimestamp } from "../../provider-history-timestamps.js";
 import { claudeProjectDirSync } from "./project-dir.js";
+import {
+  createLaunchFileSystem,
+  type LaunchFileSystem,
+} from "../../../devcontainer/launch-filesystem.js";
 import { THINKING_APPLIES_NEXT_TURN_NOTICE } from "../../provider-notices.js";
 import {
   isProviderImageMarkdown,
@@ -113,7 +117,6 @@ import { execCommand } from "../../../../utils/spawn.js";
 import { composeSystemPromptParts } from "../../system-prompt.js";
 import type { ProcessLaunchStrategy } from "../../../devcontainer/launch-strategy.js";
 
-const fsPromises = promises;
 const CLAUDE_SETTING_SOURCES: NonNullable<ClaudeOptions["settingSources"]> = [
   "user",
   "project",
@@ -1540,19 +1543,27 @@ export class ClaudeAgentClient implements AgentClient {
   async listImportableSessions(
     options?: ListImportableSessionsOptions,
   ): Promise<ImportableProviderSession[]> {
-    const configDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
-    const sessionsRoot = options?.cwd
-      ? claudeProjectDirSync(options.cwd, { configDir })
+    // A container workspace's sessions were written inside the container,
+    // under its HOME and keyed by its cwd. The host's copies belong to a
+    // different environment.
+    const files = createLaunchFileSystem(options?.launchStrategy);
+    const strategy = options?.launchStrategy;
+    const configDir = files.isRemote
+      ? path.join(await files.homeDir(), ".claude")
+      : (process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude"));
+    const sessionCwd =
+      options?.cwd && strategy?.isIsolated ? strategy.resolveCwd(options.cwd) : options?.cwd;
+    const sessionsRoot = sessionCwd
+      ? claudeProjectDirSync(sessionCwd, { configDir })
       : path.join(configDir, "projects");
-    if (!(await pathExists(sessionsRoot))) {
-      return [];
-    }
     const limit = options?.limit ?? 20;
-    const candidates = await collectRecentClaudeSessions(sessionsRoot, limit * 3, {
-      rootIsProjectDir: Boolean(options?.cwd),
+    const candidates = await collectRecentClaudeSessions(files, sessionsRoot, limit * 3, {
+      rootIsProjectDir: Boolean(sessionCwd),
     });
     const parsed = await Promise.all(
-      candidates.map((candidate) => parseClaudeSessionDescriptor(candidate.path, candidate.mtime)),
+      candidates.map((candidate) =>
+        parseClaudeSessionDescriptor(files, candidate.path, candidate.mtime),
+      ),
     );
     return parsed
       .filter((session): session is ImportableProviderSession => session !== null)
@@ -1625,6 +1636,8 @@ export class ClaudeAgentClient implements AgentClient {
  * this name and let the image's PATH resolve it.
  */
 const CLAUDE_CONTAINER_COMMAND = "claude";
+/** Subagent transcripts nest a level or two below the session directory. */
+const SIDECHAIN_SEARCH_DEPTH = 4;
 
 async function resolveClaudeBinary(runtimeSettings?: ProviderRuntimeSettings): Promise<string> {
   const launch = await resolveProviderLaunch({
@@ -1943,6 +1956,13 @@ class ClaudeAgentSession implements AgentSession {
   private readonly config: ClaudeAgentConfig;
   private readonly launchEnv?: Record<string, string>;
   private readonly launchStrategy?: ProcessLaunchStrategy;
+  /**
+   * Where this session's transcripts live: the container's filesystem when the
+   * agent runs in one, the host's otherwise.
+   */
+  private readonly transcriptFiles: LaunchFileSystem;
+  /** In-flight transcript read; streamHistory waits on it. */
+  private historyLoad: Promise<void> | null = null;
   private readonly agentId?: string;
   private readonly defaults?: { agents?: Record<string, AgentDefinition> };
   private readonly runtimeSettings?: ProviderRuntimeSettings;
@@ -1999,6 +2019,7 @@ class ClaudeAgentSession implements AgentSession {
     this.config = config;
     assertClaudeThinkingOptionSupported(config.model, config.thinkingOptionId);
     this.launchStrategy = options.launchStrategy;
+    this.transcriptFiles = createLaunchFileSystem(options.launchStrategy);
     this.launchEnv = options.launchEnv;
     this.agentId = options.agentId;
     this.defaults = options.defaults;
@@ -2196,6 +2217,9 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+    // The transcript read is async; without this the first stream can start
+    // before the history it is supposed to replay has landed.
+    await this.historyLoad;
     if (
       !this.historyPending ||
       (this.persistedHistory.length === 0 && this.persistedProviderSubagentEvents.length === 0)
@@ -2480,10 +2504,10 @@ class ClaudeAgentSession implements AgentSession {
       // (see `claude --help`), so the SDK's persistSession=false is silently dropped
       // in stream-json mode. Sweep the transcript ourselves so ephemeral runs
       // (metadata generator, branch-name generator) don't show up as resumable.
-      const historyPath = this.resolveHistoryPath(this.claudeSessionId);
+      const historyPath = await this.resolveHistoryPath(this.claudeSessionId);
       if (historyPath) {
         try {
-          await promises.rm(historyPath, { force: true });
+          await this.transcriptFiles.remove(historyPath);
         } catch (error) {
           this.logger.warn(
             { err: error, historyPath, claudeSessionId: this.claudeSessionId },
@@ -2619,6 +2643,9 @@ class ClaudeAgentSession implements AgentSession {
     };
     error?: string;
   }> {
+    // Rewind candidates come from the persisted transcript, which is read
+    // asynchronously (an exec into the container for an isolated session).
+    await this.historyLoad;
     if (typeof args === "string" && args.trim().length > 0) {
       const candidate = args.trim().split(/\s+/)[0] ?? "";
       if (!UUID_PATTERN.test(candidate)) {
@@ -4311,18 +4338,25 @@ class ClaudeAgentSession implements AgentSession {
     }
   }
 
+  /**
+   * Reading the transcript is I/O against the agent's own filesystem, which for
+   * a container session means an exec into it. Kick it off and let
+   * streamHistory wait on the result rather than blocking construction.
+   */
   private loadPersistedHistory(sessionId: string): void {
-    try {
-      const historyPath = this.resolveHistoryPath(sessionId);
-      if (!historyPath || !fs.existsSync(historyPath)) {
-        return;
-      }
-      const content = fs.readFileSync(historyPath, "utf8");
-      this.ingestPersistedHistory(content);
-      this.ingestPersistedSidechains(content, readClaudeSidechainHistory(historyPath));
-    } catch {
-      // ignore history load failures
-    }
+    this.historyLoad = this.readPersistedHistory(sessionId).catch(() => undefined);
+  }
+
+  private async readPersistedHistory(sessionId: string): Promise<void> {
+    const historyPath = await this.resolveHistoryPath(sessionId);
+    if (!historyPath) return;
+    const content = await this.transcriptFiles.readFile(historyPath);
+    if (content === null) return;
+    this.ingestPersistedHistory(content);
+    this.ingestPersistedSidechains(
+      content,
+      await readClaudeSidechainHistory(this.transcriptFiles, historyPath),
+    );
   }
 
   private ingestPersistedHistory(content: string): void {
@@ -4406,29 +4440,50 @@ class ClaudeAgentSession implements AgentSession {
     }
   }
 
-  private resolveHistoryPath(sessionId: string): string | null {
+  /**
+   * Where this session's transcript is. Claude keys the directory off the cwd
+   * it ran in, so a container session's transcript sits under the container's
+   * HOME, named for the container's cwd — neither of which the host shares.
+   */
+  private async resolveHistoryPath(sessionId: string): Promise<string | null> {
     const cwd = this.config.cwd;
     if (!cwd) return null;
-    const configDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
-    const candidates = [cwd];
-    try {
-      const realCwd = fs.realpathSync(cwd);
-      if (realCwd !== cwd) {
-        candidates.push(realCwd);
+    const configDir = await this.resolveTranscriptConfigDir();
+    const candidates = [this.resolveTranscriptCwd(cwd)];
+    if (!this.transcriptFiles.isRemote) {
+      try {
+        const realCwd = fs.realpathSync(cwd);
+        if (realCwd !== cwd) {
+          candidates.push(realCwd);
+        }
+      } catch {
+        // Fall back to the configured cwd when the path has already disappeared.
       }
-    } catch {
-      // Fall back to the configured cwd when the path has already disappeared.
     }
     for (const candidate of candidates) {
       const historyPath = path.join(
         claudeProjectDirSync(candidate, { configDir }),
         `${sessionId}.jsonl`,
       );
-      if (fs.existsSync(historyPath)) {
+      if (await this.transcriptFiles.exists(historyPath)) {
         return historyPath;
       }
     }
-    return path.join(claudeProjectDirSync(cwd, { configDir }), `${sessionId}.jsonl`);
+    return path.join(claudeProjectDirSync(candidates[0], { configDir }), `${sessionId}.jsonl`);
+  }
+
+  /** The cwd Claude saw — the container's path for a container session. */
+  private resolveTranscriptCwd(cwd: string): string {
+    return this.launchStrategy?.isIsolated ? this.launchStrategy.resolveCwd(cwd) : cwd;
+  }
+
+  private async resolveTranscriptConfigDir(): Promise<string> {
+    if (!this.transcriptFiles.isRemote) {
+      return process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
+    }
+    // The daemon's CLAUDE_CONFIG_DIR describes the host's install, not this
+    // container's; the container's own HOME is the only thing that applies.
+    return path.join(await this.transcriptFiles.homeDir(), ".claude");
   }
 
   private convertHistoryEntry(entry: ClaudeHistoryEntry): AgentTimelineItem[] {
@@ -5132,27 +5187,23 @@ function parseClaudeHistoryRecords(content: string): ClaudeHistoryEntry[] {
   return entries;
 }
 
-function readClaudeSidechainHistory(historyPath: string): string[] {
+async function readClaudeSidechainHistory(
+  files: LaunchFileSystem,
+  historyPath: string,
+): Promise<string[]> {
   const sessionDirectory = path.join(
     path.dirname(historyPath),
     path.basename(historyPath, ".jsonl"),
   );
   const sidechainDirectory = path.join(sessionDirectory, "subagents");
-  if (!fs.existsSync(sidechainDirectory)) return [];
-
+  const entries = await files.listFiles(sidechainDirectory, {
+    suffix: ".jsonl",
+    maxDepth: SIDECHAIN_SEARCH_DEPTH,
+  });
   const contents: string[] = [];
-  const directories = [sidechainDirectory];
-  while (directories.length > 0) {
-    const directory = directories.pop();
-    if (!directory) continue;
-    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-      const entryPath = path.join(directory, entry.name);
-      if (entry.isDirectory()) {
-        directories.push(entryPath);
-      } else if (entry.isFile() && entry.name.endsWith(".jsonl")) {
-        contents.push(fs.readFileSync(entryPath, "utf8"));
-      }
-    }
+  for (const entry of entries) {
+    const content = await files.readFile(entry.path);
+    if (content) contents.push(content);
   }
   return contents;
 }
@@ -5500,59 +5551,22 @@ interface ClaudeSessionCandidate {
   mtime: Date;
 }
 
-async function pathExists(target: string): Promise<boolean> {
-  try {
-    await fsPromises.access(target);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 async function collectRecentClaudeSessions(
+  files: LaunchFileSystem,
   root: string,
   limit: number,
   options?: { rootIsProjectDir?: boolean },
 ): Promise<ClaudeSessionCandidate[]> {
-  let rootEntries: string[];
-  try {
-    rootEntries = await fsPromises.readdir(root);
-  } catch {
-    return [];
-  }
-  const fileEntries = options?.rootIsProjectDir
-    ? rootEntries.filter((file) => file.endsWith(".jsonl")).map((file) => path.join(root, file))
-    : (
-        await Promise.all(
-          rootEntries.map(async (dirName) => {
-            const projectPath = path.join(root, dirName);
-            try {
-              const stats = await fsPromises.stat(projectPath);
-              if (!stats.isDirectory()) return [] as string[];
-              const files = await fsPromises.readdir(projectPath);
-              return files
-                .filter((file) => file.endsWith(".jsonl"))
-                .map((file) => path.join(projectPath, file));
-            } catch {
-              return [] as string[];
-            }
-          }),
-        )
-      ).flat();
-  const statResults = await Promise.all(
-    fileEntries.map(async (fullPath) => {
-      try {
-        const fileStats = await fsPromises.stat(fullPath);
-        return { path: fullPath, mtime: fileStats.mtime };
-      } catch {
-        return null;
-      }
-    }),
-  );
-  const candidates: ClaudeSessionCandidate[] = statResults.filter(
-    (entry): entry is ClaudeSessionCandidate => entry !== null,
-  );
-  return candidates.sort((a, b) => b.mtime.getTime() - a.mtime.getTime()).slice(0, limit);
+  // Project directories sit one level below the sessions root, transcripts one
+  // below that; pointing at a single project directory needs only the files.
+  const entries = await files.listFiles(root, {
+    suffix: ".jsonl",
+    maxDepth: options?.rootIsProjectDir ? 1 : 2,
+  });
+  return entries
+    .map((entry) => ({ path: entry.path, mtime: new Date(entry.mtimeMs) }))
+    .sort((a, b) => b.mtime.getTime() - a.mtime.getTime())
+    .slice(0, limit);
 }
 
 interface ClaudeSessionDescriptorAccumulator {
@@ -5602,13 +5616,12 @@ function applyClaudeSessionEntryToAccumulator(
 }
 
 async function parseClaudeSessionDescriptor(
+  files: LaunchFileSystem,
   filePath: string,
   mtime: Date,
 ): Promise<ImportableProviderSession | null> {
-  let content: string;
-  try {
-    content = await fsPromises.readFile(filePath, "utf8");
-  } catch {
+  const content = await files.readFile(filePath);
+  if (content === null) {
     return null;
   }
 

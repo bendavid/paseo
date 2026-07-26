@@ -39,6 +39,8 @@ import type {
 import { createDevContainerBackend, createLaunchStrategyRegistry } from "./devcontainer/index.js";
 import { createContainerBackendRegistry } from "./devcontainer/container-backend-registry.js";
 import { ContainerProbeCoordinator } from "./devcontainer/container-probe-coordinator.js";
+import { createLaunchFileSystem } from "./devcontainer/launch-filesystem.js";
+import { ClaudeAgentClient } from "./agent/providers/claude/agent.js";
 import {
   ContainerExecLaunchStrategy,
   LocalLaunchStrategy,
@@ -1446,6 +1448,114 @@ dockerTest(
     } finally {
       await backend.stop(workspaceRef, { remove: true }).catch(() => {});
       await backend.stop(probeRef, { remove: true }).catch(() => {});
+    }
+  },
+  180_000,
+);
+
+dockerTest(
+  "real backend: transcripts are read from inside the container, not the host",
+  async () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "paseo-devcontainer-real-"));
+    writeFileSync(path.join(cwd, ".devcontainer.json"), '{"image":"alpine:latest"}');
+    const backend = createDevContainerBackend({ logger: createTestLogger() });
+    const ref = { key: "real-transcripts", kind: "workspace" as const, workspaceFolder: cwd };
+
+    expect(await backend.isAvailable()).toBe(true);
+
+    try {
+      const handle = await backend.up(ref);
+      const strategy = backend.createStrategy(ref.key, cwd, handle);
+      const files = createLaunchFileSystem(strategy);
+
+      // An agent writes its transcripts under the container's HOME, keyed by
+      // the container's cwd — neither of which exists on the host.
+      const home = await files.homeDir();
+      expect(home.startsWith("/")).toBe(true);
+      const sessionDir = `${home}/.claude/projects/-workspaces-demo`;
+      const transcript = `${sessionDir}/session-1.jsonl`;
+      const write = strategy.spawn("sh", [
+        "-c",
+        `mkdir -p ${sessionDir} && printf 'head-line\nlast-line\n' > ${transcript}`,
+      ]);
+      await new Promise((resolve) => write.on("close", resolve));
+
+      const listed = await files.listFiles(`${home}/.claude/projects`, {
+        suffix: ".jsonl",
+        maxDepth: 2,
+      });
+      expect(listed.map((entry) => entry.path)).toEqual([transcript]);
+      expect(listed[0].mtimeMs).toBeGreaterThan(0);
+      expect(listed[0].size).toBe(20);
+
+      expect(await files.readFile(transcript)).toBe("head-line\nlast-line\n");
+      expect(await files.readHead(transcript, 9)).toBe("head-line");
+      expect(await files.readTail(transcript, 10)).toBe("last-line\n");
+      expect(await files.exists(transcript)).toBe(true);
+
+      // The host must not have gained any of this.
+      const hostFiles = createLaunchFileSystem(null);
+      expect(await hostFiles.exists(transcript)).toBe(false);
+
+      await files.remove(transcript);
+      expect(await files.exists(transcript)).toBe(false);
+    } finally {
+      await backend.stop(ref, { remove: true }).catch(() => {});
+    }
+  },
+  180_000,
+);
+
+dockerTest(
+  "real backend: Claude lists the container's sessions, not the host's",
+  async () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "paseo-devcontainer-real-"));
+    writeFileSync(path.join(cwd, ".devcontainer.json"), '{"image":"alpine:latest"}');
+    const backend = createDevContainerBackend({ logger: createTestLogger() });
+    const ref = { key: "real-claude-import", kind: "workspace" as const, workspaceFolder: cwd };
+
+    expect(await backend.isAvailable()).toBe(true);
+
+    try {
+      const handle = await backend.up(ref);
+      const strategy = backend.createStrategy(ref.key, cwd, handle);
+      const files = createLaunchFileSystem(strategy);
+      const home = await files.homeDir();
+
+      // Claude names the directory after the cwd it ran in, which inside the
+      // container is the remote workspace folder.
+      const encoded = handle.remoteWorkspaceFolder.replaceAll("/", "-");
+      const sessionDir = `${home}/.claude/projects/${encoded}`;
+      const transcript = `${sessionDir}/11111111-2222-3333-4444-555555555555.jsonl`;
+      const record = JSON.stringify({
+        type: "user",
+        sessionId: "11111111-2222-3333-4444-555555555555",
+        cwd: handle.remoteWorkspaceFolder,
+        message: { role: "user", content: "hello from inside the container" },
+      });
+      const write = strategy.spawn("sh", [
+        "-c",
+        `mkdir -p ${sessionDir} && printf '%s\n' ${JSON.stringify(record)} > ${transcript}`,
+      ]);
+      await new Promise((resolve) => write.on("close", resolve));
+
+      const client = new ClaudeAgentClient({
+        logger: createTestLogger(),
+        resolveBinary: async () => "claude",
+      });
+      const sessions = await client.listImportableSessions({ cwd, launchStrategy: strategy });
+
+      expect(sessions.map((session) => session.providerHandleId)).toEqual([
+        "11111111-2222-3333-4444-555555555555",
+      ]);
+      // The cwd comes out of the transcript, so it is the container's.
+      expect(sessions[0].cwd).toBe(handle.remoteWorkspaceFolder);
+      expect(sessions[0].firstPromptPreview).toBe("hello from inside the container");
+
+      // The same call without a container must not see it.
+      expect(await client.listImportableSessions({ cwd })).toEqual([]);
+    } finally {
+      await backend.stop(ref, { remove: true }).catch(() => {});
     }
   },
   180_000,

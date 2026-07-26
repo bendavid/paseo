@@ -2363,7 +2363,10 @@ export class OmpAgentClient implements AgentClient {
   }
 
   async importSession(input: ImportProviderSessionInput, context: ImportProviderSessionContext) {
-    const importConfig = await readOmpImportSessionConfig(input.providerHandleId);
+    const importConfig = await readOmpImportSessionConfig(
+      input.providerHandleId,
+      context.launchContext?.launchStrategy,
+    );
     return importSessionFromPersistence({
       provider: this.provider,
       request: input,

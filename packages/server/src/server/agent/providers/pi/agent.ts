@@ -2440,6 +2440,10 @@ export class PiRpcAgentClient implements AgentClient {
   async listImportableSessions(
     options?: ListImportableSessionsOptions,
   ): Promise<ImportableProviderSession[]> {
+    // Pi reads its transcripts from disk and does not run in a container
+    // (no supportsIsolatedLaunch), so for a container workspace the host's
+    // sessions are the wrong machine's and could never be resumed there.
+    if (options?.launchStrategy?.isIsolated) return [];
     return await listPiImportableSessions({
       ...options,
       sessionDir: this.providerParams.sessionDir,
