@@ -1,140 +1,39 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Text, View } from "react-native";
-import { StyleSheet, UnistylesRuntime } from "react-native-unistyles";
+import { useEffect, useState } from "react";
+import { View } from "react-native";
+import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
-import {
-  chunkBytes,
-  pdfPreviewStateFromMessage,
-  pdfViewerTheme,
-  type PdfPreviewState,
-} from "@/pdf/pdf-preview-state";
-import {
-  parsePdfViewerOutboundMessage,
-  type PdfViewerInboundMessage,
-} from "@/pdf/pdf-viewer-protocol";
+import { createPdfObjectUrl, revokePdfObjectUrl } from "@/pdf/pdf-object-url";
+import type { PdfPreviewProps } from "@/pdf/pdf-preview-props";
 
 /**
- * The viewer runs in an iframe rather than in the page. Metro can bundle
- * pdfjs-dist, but native needs a WebView either way — React Native has no DOM
- * canvas to rasterize into — so one generated document serves every platform
- * instead of a second, web-only renderer. The iframe also gets a real `Worker`,
- * which a Metro import cannot provide. Built by
- * scripts/build-pdf-webview-html.mjs. See docs/pdf-preview.md.
+ * The browser renders the PDF, not us: a blob URL in an iframe hands the bytes
+ * to Chromium's PDFium or Safari's PDFKit, which brings text selection, search,
+ * print, and native zoom that a canvas renderer would have to reimplement.
+ *
+ * Electron needs `webPreferences.plugins` for this — see packages/desktop.
  */
-export function PdfPreview({ bytes, testID }: { bytes: Uint8Array; testID?: string }) {
+export function PdfPreview({ bytes, testID }: PdfPreviewProps) {
   const { t } = useTranslation();
-  const theme = UnistylesRuntime.getTheme();
-  const iframeRef = useRef<HTMLIFrameElement | null>(null);
-  const [state, setState] = useState<PdfPreviewState>({ status: "loading" });
-  // Imported on demand so the ~2 MB viewer document lands in its own chunk
-  // instead of the initial bundle — most sessions never open a PDF.
-  const [viewerHtml, setViewerHtml] = useState<string | null>(null);
+  const [objectUrl, setObjectUrl] = useState<string | null>(null);
 
   useEffect(() => {
-    let active = true;
-    void (async () => {
-      try {
-        const module = await import("@/pdf/webview/pdf-viewer-webview-html");
-        if (active) setViewerHtml(module.pdfViewerWebViewHtml);
-      } catch (error) {
-        if (active) {
-          setState({
-            status: "error",
-            message: error instanceof Error ? error.message : String(error),
-          });
-        }
-      }
-    })();
+    const url = createPdfObjectUrl(bytes);
+    setObjectUrl(url);
     return () => {
-      active = false;
+      setObjectUrl(null);
+      revokePdfObjectUrl(url);
     };
-  }, []);
-
-  const viewerTheme = useMemo(
-    () =>
-      pdfViewerTheme({
-        background: theme.colors.surface1,
-        pageBackground: theme.colors.background,
-        foreground: theme.colors.foregroundMuted,
-      }),
-    [theme.colors.background, theme.colors.foregroundMuted, theme.colors.surface1],
-  );
-  // Read through a ref so a theme change repaints the viewer instead of
-  // re-sending the whole document.
-  const viewerThemeRef = useRef(viewerTheme);
-  viewerThemeRef.current = viewerTheme;
-
-  const send = useCallback((message: PdfViewerInboundMessage) => {
-    iframeRef.current?.contentWindow?.postMessage(message, "*");
-  }, []);
-
-  const sendDocument = useCallback(() => {
-    send({ type: "open", theme: viewerThemeRef.current });
-    for (const chunk of chunkBytes(bytes)) {
-      // Copied out of the read buffer: the structured clone must not alias a
-      // subarray whose backing buffer the caller may reuse.
-      send({ type: "chunk", encoding: "bytes", data: new Uint8Array(chunk) });
-    }
-    send({ type: "commit" });
-  }, [bytes, send]);
-
-  useEffect(() => {
-    function onMessage(event: MessageEvent) {
-      if (event.source !== iframeRef.current?.contentWindow) return;
-      if (typeof event.data !== "string") return;
-      const message = parsePdfViewerOutboundMessage(event.data);
-      if (!message) return;
-      if (message.type === "ready") {
-        sendDocument();
-        return;
-      }
-      const next = pdfPreviewStateFromMessage(message);
-      if (next) setState(next);
-    }
-
-    window.addEventListener("message", onMessage);
-    return () => window.removeEventListener("message", onMessage);
-  }, [sendDocument]);
-
-  // A new document replaces the old one in the running viewer; no reload. On
-  // first mount the iframe has not booted yet and this send is dropped — the
-  // viewer's "ready" handshake above is what delivers it.
-  useEffect(() => {
-    setState({ status: "loading" });
-    sendDocument();
-  }, [sendDocument]);
-
-  useEffect(() => {
-    send({ type: "theme", theme: viewerTheme });
-  }, [send, viewerTheme]);
+  }, [bytes]);
 
   return (
     <View style={styles.container} testID={testID}>
-      {viewerHtml ? (
-        <iframe
-          ref={iframeRef}
-          title={t("panels.file.pdf.title")}
-          srcDoc={viewerHtml}
-          // allow-same-origin is what lets the viewer spawn its pdf.js worker
-          // from a blob URL; everything else the document could reach for —
-          // navigation, popups, forms, downloads — stays denied. The document is
-          // our own generated bundle, not remote content.
-          // oxlint-disable-next-line react/iframe-missing-sandbox
-          sandbox="allow-scripts allow-same-origin"
-          style={IFRAME_STYLE}
-        />
-      ) : null}
-      {state.status === "loading" ? (
-        <View style={styles.overlay} pointerEvents="none">
-          <ActivityIndicator size="small" />
-          <Text style={styles.overlayText}>{t("panels.file.pdf.loading")}</Text>
-        </View>
-      ) : null}
-      {state.status === "error" ? (
-        <View style={styles.overlay}>
-          <Text style={styles.errorText}>{t("panels.file.pdf.failed")}</Text>
-          <Text style={styles.overlayText}>{state.message}</Text>
-        </View>
+      {objectUrl ? (
+        // Deliberately unsandboxed: a sandboxed browsing context blocks plugin
+        // content, which is exactly the built-in PDF viewer this relies on. The
+        // document is a blob minted from bytes we already hold, and the viewer
+        // does not execute script from inside the PDF.
+        // oxlint-disable-next-line react/iframe-missing-sandbox
+        <iframe title={t("panels.file.pdf.title")} src={objectUrl} style={IFRAME_STYLE} />
       ) : null}
     </View>
   );
@@ -152,23 +51,5 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     minHeight: 0,
     backgroundColor: theme.colors.surface1,
-  },
-  overlay: {
-    ...StyleSheet.absoluteFillObject,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: theme.spacing[2],
-    padding: theme.spacing[4],
-    backgroundColor: theme.colors.surface1,
-  },
-  overlayText: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
-    textAlign: "center",
-  },
-  errorText: {
-    color: theme.colors.destructive,
-    fontSize: theme.fontSize.sm,
-    textAlign: "center",
   },
 }));

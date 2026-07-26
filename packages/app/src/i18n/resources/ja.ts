@@ -1495,6 +1495,7 @@ export const ja: TranslationResources = {
         title: "PDFプレビュー",
         loading: "PDFを描画中...",
         failed: "このPDFを描画できませんでした",
+        unsupportedPlatform: "このプラットフォームではPDFプレビューはまだ利用できません",
         hostUpdateRequired: "PDFをプレビューするにはホストを更新してください",
       },
       editor: {

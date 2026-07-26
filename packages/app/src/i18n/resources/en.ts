@@ -1490,6 +1490,7 @@ export const en = {
         title: "PDF preview",
         loading: "Rendering PDF...",
         failed: "Could not render this PDF",
+        unsupportedPlatform: "PDF preview is not supported on this platform yet",
         hostUpdateRequired: "Update the host to preview PDFs",
       },
       editor: {

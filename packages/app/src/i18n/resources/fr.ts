@@ -1525,6 +1525,8 @@ export const fr: TranslationResources = {
         title: "Aperçu du PDF",
         loading: "Rendu du PDF...",
         failed: "Impossible d’afficher ce PDF",
+        unsupportedPlatform:
+          "L’aperçu des PDF n’est pas encore pris en charge sur cette plateforme",
         hostUpdateRequired: "Mettez à jour l’hôte pour afficher les PDF",
       },
       editor: {

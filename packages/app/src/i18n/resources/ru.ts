@@ -1513,6 +1513,7 @@ export const ru: TranslationResources = {
         title: "Предпросмотр PDF",
         loading: "Отображение PDF...",
         failed: "Не удалось отобразить этот PDF",
+        unsupportedPlatform: "Предпросмотр PDF пока не поддерживается на этой платформе",
         hostUpdateRequired: "Обновите хост для предпросмотра PDF",
       },
       editor: {

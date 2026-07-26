@@ -1508,6 +1508,7 @@ export const ptBR: TranslationResources = {
         title: "Prévia do PDF",
         loading: "Renderizando o PDF...",
         failed: "Não foi possível renderizar este PDF",
+        unsupportedPlatform: "A prévia de PDF ainda não é compatível com esta plataforma",
         hostUpdateRequired: "Atualize o host para visualizar PDFs",
       },
       editor: {

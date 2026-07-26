@@ -1,101 +1,79 @@
 # PDF preview
 
-Opening a `.pdf` in the file panel renders it with pdf.js. One renderer serves
-every platform: a generated, self-contained HTML document that runs in an
-iframe on web/Electron and in a `WebView` on iOS/Android.
+Opening a `.pdf` in the file panel hands the bytes to the platform's own PDF
+viewer. There is no bundled renderer: Chromium's PDFium, Safari's PDFKit, and
+WKWebView already do this better than a canvas renderer would, and they bring
+text selection, find-in-page, print, and native zoom with them.
 
-## Why a bundled document instead of importing pdf.js
+The cost of that choice is **Android has no PDF preview** — see below.
 
-Not because Metro can't bundle `pdfjs-dist` — it can. A probe against
-`expo export --platform web` bundles both `pdfjs-dist` and
-`pdfjs-dist/build/pdf.worker.mjs` without error (+1.77 MB), and compiles away
-every `import.meta` reference. Two things bundling does not fix:
+## One shell per platform
 
-- **React Native has no DOM canvas.** pdf.js rasterizes through
-  `page.render({ canvas })`, so iOS and Android need a WebView whatever the
-  bundler does. The WebView is there to supply a canvas, not to work around
-  module resolution.
-- **A `Worker` script cannot come from an import.** Importing the worker module
-  only registers `globalThis.pdfjsWorker`, which is pdf.js's _main-thread_
-  handler — parsing and rasterizing would land on the app's own thread.
+`components/pdf-preview` resolves through Metro's platform extensions. All three
+take the same props (`pdf/pdf-preview-props.ts`) and the pane doesn't know which
+one it got:
 
-Given a WebView is required for native regardless, one generated document
-serving every platform beats a Metro-bundled web renderer plus a WebView
-renderer for native, so the viewer is built with esbuild:
+| File                  | Platforms                        | How it renders                                                                       |
+| --------------------- | -------------------------------- | ------------------------------------------------------------------------------------ |
+| `pdf-preview.web.tsx` | browser, Electron                | blob URL from the bytes in an `<iframe>`; Chromium/WebKit renders it                 |
+| `pdf-preview.ios.tsx` | iOS                              | bytes staged to a file, `WebView` pointed at the `file://` URL; WKWebView renders it |
+| `pdf-preview.tsx`     | Android (and any other platform) | "not supported on this platform yet"                                                 |
 
-```
-packages/app/scripts/build-pdf-webview-html.mjs
-  → src/pdf/webview/pdf-viewer-webview-html.ts   (generated, committed, ~2 MB)
-```
+Three details are load-bearing:
 
-This mirrors the terminal's `build-terminal-webview-html.mjs`. Both run from
-`npm run build:webviews` in `packages/app`, which `eas-build-post-install`
-calls. **Re-run `npm run build:pdf-webview` after editing
-`src/pdf/webview/pdf-viewer-webview-entry.ts`** — the generated file is what
-ships, and nothing rebuilds it automatically during dev.
+- **The blob must be typed `application/pdf`** (`pdf/pdf-object-url.ts`). The
+  mime is the only thing telling the browser to open its viewer instead of
+  downloading the file.
+- **The web iframe is deliberately not sandboxed.** A sandboxed browsing context
+  blocks plugin content, and the built-in PDF viewer _is_ plugin content. The
+  document is a blob minted from bytes already in the renderer, and pdf viewing
+  does not execute script from the file.
+- **Electron needs `webPreferences.plugins: true`** (set on the main window in
+  `packages/desktop/src/main.ts`). Without it Chromium's PDF viewer is disabled
+  and the iframe renders nothing. NPAPI/PPAPI no longer exist, so the flag
+  admits the built-in viewer and nothing else.
 
-Two details in that script are load-bearing:
+iOS needs the bytes on disk because WKWebView renders from a URL, not from
+memory. The shell stages them through the existing attachment store — the same
+machinery image previews use — which yields a `file://` URI, and passes the
+containing directory as `allowingReadAccessToURL`; WKWebView refuses a file URL
+it has not been granted. The staged copy keeps its `.pdf` extension
+(`EXTENSION_BY_MIME_TYPE` in `attachments/local-file-attachment-store.ts`),
+which is how the viewer decides what the file is.
 
-- **The worker is inlined as base64.** pdf.js is full of non-ASCII characters,
-  and embedding the worker as a JS string literal costs a six-byte `\uXXXX`
-  escape for each one — about a megabyte. The viewer decodes the base64 and
-  turns it into a blob-URL `Worker`, so page rendering stays off the shell's
-  main thread. If blob workers are refused, it evaluates the same bundle in the
-  viewer scope, which registers `globalThis.pdfjsWorker` and lets pdf.js fall
-  back to its main-thread handler.
-- **`legacy/build/*.min.mjs` is deliberate.** The bundle targets `ios15`, the
-  same baseline as the terminal webview. The default (non-legacy) build assumes
-  newer engines.
+The staged file is content-addressed by the pane's preview id, so reopening the
+same PDF reuses it. It also outlives the preview, exactly like a staged image
+preview — the attachment store's GC is the only thing that reclaims it, which is
+more noticeable for a 20 MB PDF than for a thumbnail.
 
-## What is not shipped
+Web and Electron deliberately skip the attachment store: the bytes are already
+in the renderer process, so `URL.createObjectURL` avoids a persist-then-read
+round trip (on Electron that round trip would be the whole file as base64 over
+IPC).
 
-pdf.js's optional assets — `cmaps/` (1.7 MB), `standard_fonts/` (800 KB), and
-the wasm image decoders (~1 MB) — stay out of the bundle, and there is no URL
-for the viewer to fetch them from. Consequences, all of them per-file rather
-than fatal:
+## Android
 
-- Documents relying on the 14 standard fonts render with a system fallback font
-  (`useSystemFonts: true`), so metrics can differ slightly from a desktop
-  viewer.
-- CJK text that depends on predefined Adobe CMaps may show missing glyphs.
-- JBIG2 and JPEG2000 images fall back to pdf.js's pure-JS decoders, and can
-  fail on their own without failing the page.
+Android's WebView has never shipped a PDF viewer — point it at a PDF and it
+downloads rather than renders. There is no system surface to hand the bytes to,
+so the base shell shows an unsupported message. This is a known, accepted gap.
 
-Adding any of these means either growing the bundle or giving the viewer a real
-origin to fetch from. Do not reach for a CDN — the app must work offline and
-over the relay.
+Closing it needs a real renderer, not a tweak: either pdf.js in a WebView (an
+esbuild-bundled viewer document, roughly what this feature shipped before the
+switch — see git history for `pdf-viewer-webview-entry.ts`) or a native module
+over Android's `PdfRenderer`. Both are Android-only work; nothing about the web
+or iOS shells needs to change to accommodate one.
 
-## The shell/viewer contract
+## What this costs in testability
 
-`src/pdf/pdf-viewer-protocol.ts` is the whole contract. The shells
-(`components/pdf-preview.web.tsx`, `components/pdf-preview.tsx`) differ only in
-transport:
+Headless Chromium does not ship the PDF viewer — setting an iframe to a blob PDF
+kills the page target outright. Both the vitest browser project and the
+Playwright e2e project run headless, so **the rendering path has no automated
+coverage on any platform.** What is covered is our own logic: the blob URL's
+mime and lifecycle (`pdf/pdf-object-url.test.ts`), the read-grant directory
+(`pdf/pdf-preview-props.test.ts`), and mime detection (`pdf/pdf-mime.test.ts`).
 
-|                | web / Electron                                              | iOS / Android                                                                     |
-| -------------- | ----------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| Host           | `<iframe srcdoc sandbox="allow-scripts allow-same-origin">` | `react-native-webview` with `source={{ html }}`                                   |
-| Shell → viewer | `postMessage`, bytes as `Uint8Array` (structured clone)     | `injectJavaScript` calling `__PASEO_PDF_VIEWER_RECEIVE__`, bytes as base64 chunks |
-| Viewer → shell | `window.parent.postMessage(json)`                           | `window.ReactNativeWebView.postMessage(json)`                                     |
-
-`allow-same-origin` on the iframe is what permits the blob worker; the sandbox
-still denies navigation, popups, forms, and downloads.
-
-The handshake matters: the viewer posts `ready` when it boots, and the shell
-answers with `open` → `chunk`\* → `commit`. A shell that sends bytes before
-`ready` is talking to a document that does not exist yet, so first-mount sends
-are expected to be dropped and re-sent on `ready`.
-
-`rendered` means **the first page is painted**, not merely that the document
-parsed — the shell drops its loading overlay on that message, and page-shaped
-blanks are not a preview.
-
-## Memory shape
-
-A long document is laid out as placeholder boxes sized from page one's aspect
-ratio, and an `IntersectionObserver` renders pages as they approach the
-viewport. At most `MAX_RENDERED_PAGES` (8) canvases exist at once; the farthest
-page reverts to a placeholder. A 600-page file is therefore 600 divs and 8
-bitmaps, not 600 bitmaps.
+Verifying a change here means opening a PDF in a real browser, a real Electron
+build, and a real iOS device or simulator.
 
 ## Transport: why file reads are chunked
 
@@ -105,11 +83,11 @@ any physical socket whose outbound buffer passes
 `MAX_PHYSICAL_SOCKET_BUFFERED_BYTES` (8 MiB), so a large single-frame read
 killed the very connection it was answering on.
 
-`session/files/file-transfer-emitter.ts` now emits `FileBegin`, N × 256 KiB
+`session/files/file-transfer-emitter.ts` emits `FileBegin`, N × 256 KiB
 `FileChunk`, `FileEnd`, and paces the chunks against the client's buffered
-amount — the same signal the terminal uses to decide a client is not keeping
-up. A client that stops draining for 30 s gets the transfer aborted with an
-error response rather than a socket that hangs waiting for `FileEnd`.
+amount — the same signal the terminal uses to decide a client is not keeping up.
+A client that stops draining for 30 s gets the transfer aborted with an error
+response rather than a socket that hangs waiting for `FileEnd`.
 
 Two bounds worth knowing:
 
