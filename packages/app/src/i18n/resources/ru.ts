@@ -479,6 +479,8 @@ export const ru: TranslationResources = {
       copyRelativePath: "Копировать относительный путь",
       revealIn: "Показать в {{target}}",
       download: "Скачать",
+      share: "Поделиться",
+      openWith: "Открыть с помощью…",
       addToChat: "Добавить в чат",
       moreActions: "Дополнительные действия",
       newFile: "Новый файл",
@@ -1935,6 +1937,8 @@ export const ru: TranslationResources = {
     failed: "Не удалось загрузить файл.",
     shareFile: "Поделиться файлом",
     shareFileNamed: "Поделиться {{fileName}}",
+    noAppToOpen: "На этом устройстве нет приложения, которое может открыть {{fileName}}.",
+    notificationChannel: "Загрузки",
   },
   menu: {
     backdrop: "Фон меню",
